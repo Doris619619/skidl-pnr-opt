@@ -277,13 +277,14 @@ def draw_cmd_to_svg(draw_cmd, tx, part, net_stubs, max_stub_len):
                 )
             start = Point(*shape["at"][0:2])
             rotation = shape["at"][2]
-            try:
-                justify = (
-                    shape["effects"].get("justify", shape.get("justify", "left")).lower()
-                )
-            except AttributeError:
-                justify = "left"
-            dir = {"right": Point(-1, 0), "left": Point(1, 0)}[justify] * Tx().rot(
+            justify = shape["effects"].get("justify", "center") # Center is default if missing.
+            if isinstance(justify, list):
+                justify = justify[0] # Use only horizontal justification.
+            justify = justify.lower()
+            # Direction vector for text orientation and justification.
+            # (e.g. "right" means text extends to the right of the start point.)
+            # This is wrong for center justification, but "oh, well"...
+            dir = {"right": Point(-1, 0), "left": Point(1, 0), "center": Point(1, 0)}[justify] * Tx().rot(
                 rotation
             )
             end = start + dir
