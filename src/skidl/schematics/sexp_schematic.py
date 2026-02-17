@@ -56,9 +56,15 @@ A_SIZES = OrderedDict([
 
 def _pick_paper_size(bbox):
     """Choose the smallest A-size paper that fits *bbox* (in mils)."""
+    import math
+
+    w = abs(bbox.w) if bbox.w and not math.isinf(bbox.w) else 0
+    h = abs(bbox.h) if bbox.h and not math.isinf(bbox.h) else 0
+
     # Convert bbox dimensions from mils to mm.
-    w_mm = abs(bbox.w) * 0.0254 if bbox.w else 297
-    h_mm = abs(bbox.h) * 0.0254 if bbox.h else 210
+    w_mm = w * 0.0254 if w else 0
+    h_mm = h * 0.0254 if h else 0
+
     for name, (pw, ph) in A_SIZES.items():
         if w_mm <= pw and h_mm <= ph:
             return name
@@ -413,6 +419,8 @@ def _calc_sheet_tx(bbox):
     Scales and translates the bounding box to fit a standard page, with
     the Y-flip to convert from placement coords to KiCad coords.
     """
+    import math
+
     # Determine paper size and compute scale/translation.
     paper = _pick_paper_size(bbox)
     pw, ph = A_SIZES[paper]
@@ -421,17 +429,24 @@ def _calc_sheet_tx(bbox):
     pw_mils = pw / 0.0254
     ph_mils = ph / 0.0254
 
+    # Handle empty/infinite bbox (empty circuit).
+    bw = abs(bbox.w) if bbox.w and not math.isinf(bbox.w) else 0
+    bh = abs(bbox.h) if bbox.h and not math.isinf(bbox.h) else 0
+
     # Compute scale so content fits on page with margins.
     margin = 1000  # mils
-    content_w = max(abs(bbox.w), 1)
-    content_h = max(abs(bbox.h), 1)
+    content_w = max(bw, 1)
+    content_h = max(bh, 1)
     scale_x = (pw_mils - 2 * margin) / content_w
     scale_y = (ph_mils - 2 * margin) / content_h
     scale = min(scale_x, scale_y, 1.0)  # Never scale up.
 
     # Translate so content is centered.
-    cx = (bbox.ll.x + bbox.ur.x) / 2
-    cy = (bbox.ll.y + bbox.ur.y) / 2
+    if bw > 0 and bh > 0:
+        cx = (bbox.ll.x + bbox.ur.x) / 2
+        cy = (bbox.ll.y + bbox.ur.y) / 2
+    else:
+        cx, cy = 0, 0
     tx = Tx(a=scale, b=0, c=0, d=-scale)  # Includes Y-flip.
     tx = tx.move(Point(pw_mils / 2 - cx * scale, ph_mils / 2 + cy * scale))
 
@@ -567,11 +582,20 @@ def write_top_schematic(circuit, node, filepath, top_name, title, version=202304
         title: Schematic title.
         version: S-expression version number.
     """
-    # Walk the node tree, generating .kicad_sch files for each unflattened
-    # node and collecting elements for the root sheet.
-    root_elements = node_to_sexp_schematic(node, version=version)
+    top_name = top_name or "schematic"
+    _fix_sheet_filename(node)
 
-    # Collect lib_symbols for root-level parts.
+    # Calculate root sheet transform.
+    root_bbox = node.internal_bbox()
+    sheet_tx, paper = _calc_sheet_tx(root_bbox)
+
+    elements = []
+
+    # Recurse into children — they write their own files if unflattened.
+    for child in node.children.values():
+        elements.extend(node_to_sexp_schematic(child, sheet_tx, version=version))
+
+    # Collect lib_symbols for ALL parts in the circuit.
     lib_symbols = {}
     for part in circuit.parts:
         if not isinstance(part, NetTerminal):
@@ -579,6 +603,33 @@ def write_top_schematic(circuit, node, filepath, top_name, title, version=202304
             if lib_id not in lib_symbols:
                 lib_symbols[lib_id] = part
 
+    # Generate part S-expressions for root-level parts.
+    for part in node.parts:
+        if isinstance(part, NetTerminal):
+            label = net_label_to_sexp(part.pins[0], tx=sheet_tx)
+            if label:
+                elements.append(label)
+        else:
+            elements.append(part_to_sexp(part, tx=sheet_tx))
+
+    # Generate wire S-expressions.
+    for net, wire in node.wires.items():
+        elements.extend(wire_to_sexp(net, wire, tx=sheet_tx))
+
+    # Generate junction S-expressions.
+    for net, junctions in node.junctions.items():
+        elements.extend(junction_to_sexp(net, junctions, tx=sheet_tx))
+
+    # Generate net labels for stubbed pins.
+    for part in node.parts:
+        if isinstance(part, NetTerminal):
+            continue
+        for pin in part:
+            label = net_label_to_sexp(pin, tx=sheet_tx)
+            if label:
+                elements.append(label)
+
+    # Build lib_symbols section.
     lib_symbols_sexp = Sexp(["lib_symbols"])
     for lib_id, part in lib_symbols.items():
         lib_symbols_sexp.append(Sexp(part_to_lib_symbol_definition(part)))
@@ -591,12 +642,12 @@ def write_top_schematic(circuit, node, filepath, top_name, title, version=202304
         ["generator", "skidl"],
         ["generator_version", __version__],
         ["uuid", root_uuid],
-        ["paper", "A3"],
+        ["paper", paper],
     ])
     schematic.append(Sexp(create_title_block_sexp(title)))
     schematic.append(lib_symbols_sexp)
 
-    for elem in root_elements:
+    for elem in elements:
         schematic.append(elem)
 
     # Write root schematic.
