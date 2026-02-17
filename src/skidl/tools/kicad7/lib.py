@@ -298,6 +298,9 @@ def parse_lib_part(part, partial_parse):
             if at:
                 pin_x, pin_y = at[0][1:3]
                 pin_angle = at[0][3] if len(at[0]) > 3 else 0
+                pin_orientation = {0: "R", 90: "U", 180: "L", 270: "D"}.get(pin_angle, "R")
+            else:
+                pin_x, pin_y, pin_angle, pin_orientation = 0, 0, 0, "R"
             alternate_names = pin.search("/pin/alternate", ignore_case=True)
             aliases = [a[1] for a in alternate_names] if alternate_names else []
 
@@ -312,7 +315,8 @@ def parse_lib_part(part, partial_parse):
                 y=pin_y,
                 length=pin_length,
                 rotation=pin_angle,
-                orientation=pin_angle,
+                orientation=pin_orientation,
+                # orientation=pin_angle,
             )
             p.aliases += aliases
             part.add_pins(p)

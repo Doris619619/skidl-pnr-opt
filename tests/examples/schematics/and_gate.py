@@ -1,6 +1,6 @@
 from skidl import *
 
-set_default_tool(KICAD5)
+set_default_tool(KICAD9)
 
 # Create part templates.
 q = Part(lib="Device", name="Q_PNP_CBE", dest=TEMPLATE, symtx="V")
