@@ -31,7 +31,7 @@ for module_name in os.listdir(directory):
         continue
 
     # Avoid directories like __pycache__.
-    if module_name.startswith("__"):
+    if module_name.startswith("__") or module_name.startswith("."):
         continue
 
     # Import the module.
