@@ -3,7 +3,7 @@ from skidl import *
 set_default_tool(KICAD9)
 
 # Create part templates.
-q = Part(lib="Device", name="Q_PNP_CBE", dest=TEMPLATE, symtx="V")
+q = Part(lib="Transistor_BJT", name="Q_PNP_CBE", dest=TEMPLATE, symtx="V")
 r = Part("Device", "R", dest=TEMPLATE)
 
 # Create nets.
