@@ -93,9 +93,13 @@ def part_to_sexp(part, tx=Tx()):
     origin = tx.origin.round()
     unit_num = getattr(part, "num", 1)
 
+    lib_name = os.path.splitext(part.lib.filename)[0] if hasattr(part.lib, "filename") and part.lib.filename else "Device"
+    part_name = part.name or "Unknown"
+    lib_id = f"{lib_name}:{part_name}"
+
     symbol = Sexp([
         "symbol",
-        ["lib_id", f"{part.lib.filename}:{part.name}"],
+        ["lib_id", lib_id],
         ["at", origin.x, origin.y, 0],
         ["unit", unit_num],
         ["exclude_from_sim", "no"],
@@ -154,13 +158,6 @@ def part_to_sexp(part, tx=Tx()):
                     ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]
                 ]))
                 y_offset += 1.27
-
-    # Pin UUIDs
-    for pin in part.pins:
-        symbol.append(Sexp([
-            "pin", pin.num,
-            ["uuid", _gen_uuid(f"{part.hiername}:{pin.num}")]
-        ]))
 
     # Instances section (required by KiCad 8/9 for correct reference display).
     symbol.append(Sexp([
