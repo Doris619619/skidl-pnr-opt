@@ -82,7 +82,7 @@ class TestGenUUID:
 
     def test_gen_uuid_deterministic(self):
         """Same name always produces the same UUID."""
-        from skidl.schematics.sexp_schematic import _gen_uuid
+        from skidl.tools.kicad9.sexp_schematic import _gen_uuid
 
         u1 = _gen_uuid("test_part")
         u2 = _gen_uuid("test_part")
@@ -90,7 +90,7 @@ class TestGenUUID:
 
     def test_gen_uuid_different_names(self):
         """Different names produce different UUIDs."""
-        from skidl.schematics.sexp_schematic import _gen_uuid
+        from skidl.tools.kicad9.sexp_schematic import _gen_uuid
 
         u1 = _gen_uuid("part_a")
         u2 = _gen_uuid("part_b")
@@ -98,7 +98,7 @@ class TestGenUUID:
 
     def test_gen_uuid_empty_is_random(self):
         """Empty name produces random (non-deterministic) UUIDs."""
-        from skidl.schematics.sexp_schematic import _gen_uuid
+        from skidl.tools.kicad9.sexp_schematic import _gen_uuid
 
         u1 = _gen_uuid("")
         u2 = _gen_uuid("")
@@ -106,7 +106,7 @@ class TestGenUUID:
 
     def test_gen_uuid_valid_format(self):
         """Generated UUIDs are valid UUID strings."""
-        from skidl.schematics.sexp_schematic import _gen_uuid
+        from skidl.tools.kicad9.sexp_schematic import _gen_uuid
 
         u = _gen_uuid("test")
         parsed = uuid.UUID(u)
@@ -114,14 +114,14 @@ class TestGenUUID:
 
     def test_gen_uuid_matches_namespace(self):
         """UUIDs use the same namespace as gen_netlist.py."""
-        from skidl.schematics.sexp_schematic import _gen_uuid, _NAMESPACE_UUID
+        from skidl.tools.kicad9.sexp_schematic import _gen_uuid, _NAMESPACE_UUID
 
         expected = str(uuid.uuid5(_NAMESPACE_UUID, "test"))
         assert _gen_uuid("test") == expected
 
     def test_namespace_uuid_matches_netlist(self):
         """The namespace UUID matches the one in gen_netlist.py."""
-        from skidl.schematics.sexp_schematic import _NAMESPACE_UUID
+        from skidl.tools.kicad9.sexp_schematic import _NAMESPACE_UUID
         from skidl.tools.kicad8.gen_netlist import namespace_uuid
 
         assert _NAMESPACE_UUID == namespace_uuid
@@ -131,19 +131,19 @@ class TestPaperSize:
     """Test paper size selection."""
 
     def test_small_bbox_gets_a4(self):
-        from skidl.schematics.sexp_schematic import _pick_paper_size
+        from skidl.tools.kicad9.sexp_schematic import _pick_paper_size
 
         bbox = BBox(Point(0, 0), Point(5000, 3000))  # ~127mm x 76mm
         assert _pick_paper_size(bbox) == "A4"
 
     def test_large_bbox_gets_bigger_paper(self):
-        from skidl.schematics.sexp_schematic import _pick_paper_size
+        from skidl.tools.kicad9.sexp_schematic import _pick_paper_size
 
         bbox = BBox(Point(0, 0), Point(20000, 15000))  # ~508mm x 381mm
         assert _pick_paper_size(bbox) in ("A2", "A1", "A0")
 
     def test_empty_bbox_gets_a4(self):
-        from skidl.schematics.sexp_schematic import _pick_paper_size
+        from skidl.tools.kicad9.sexp_schematic import _pick_paper_size
 
         bbox = BBox()
         assert _pick_paper_size(bbox) == "A4"
@@ -153,7 +153,7 @@ class TestTitleBlock:
     """Test title block S-expression generation."""
 
     def test_title_block_structure(self):
-        from skidl.schematics.sexp_schematic import create_title_block_sexp
+        from skidl.tools.kicad9.sexp_schematic import create_title_block_sexp
 
         tb = create_title_block_sexp("My Schematic")
         assert tb[0] == "title_block"
@@ -161,7 +161,7 @@ class TestTitleBlock:
         assert ["date", datetime.date.today().isoformat()] in tb
 
     def test_title_block_has_generator_comment(self):
-        from skidl.schematics.sexp_schematic import create_title_block_sexp
+        from skidl.tools.kicad9.sexp_schematic import create_title_block_sexp
 
         tb = create_title_block_sexp("Test")
         comments = [item for item in tb if isinstance(item, list) and item[0] == "comment"]
@@ -173,7 +173,7 @@ class TestFixSheetFilename:
     """Test .sch -> .kicad_sch filename conversion."""
 
     def test_converts_sch_extension(self):
-        from skidl.schematics.sexp_schematic import _fix_sheet_filename
+        from skidl.tools.kicad9.sexp_schematic import _fix_sheet_filename
 
         class FakeNode:
             sheet_filename = "test.sch"
@@ -183,7 +183,7 @@ class TestFixSheetFilename:
         assert node.sheet_filename == "test.kicad_sch"
 
     def test_preserves_kicad_sch_extension(self):
-        from skidl.schematics.sexp_schematic import _fix_sheet_filename
+        from skidl.tools.kicad9.sexp_schematic import _fix_sheet_filename
 
         class FakeNode:
             sheet_filename = "test.kicad_sch"
@@ -193,7 +193,7 @@ class TestFixSheetFilename:
         assert node.sheet_filename == "test.kicad_sch"
 
     def test_handles_none(self):
-        from skidl.schematics.sexp_schematic import _fix_sheet_filename
+        from skidl.tools.kicad9.sexp_schematic import _fix_sheet_filename
 
         class FakeNode:
             sheet_filename = None
@@ -208,7 +208,7 @@ class TestWriteSexpSchematic:
 
     def test_writes_valid_file(self, tmp_path):
         from simp_sexp import Sexp
-        from skidl.schematics.sexp_schematic import _write_sexp_schematic
+        from skidl.tools.kicad9.sexp_schematic import _write_sexp_schematic
 
         schematic = Sexp([
             "kicad_sch",
@@ -228,7 +228,7 @@ class TestWriteSexpSchematic:
 
     def test_quotes_property_values(self, tmp_path):
         from simp_sexp import Sexp
-        from skidl.schematics.sexp_schematic import _write_sexp_schematic
+        from skidl.tools.kicad9.sexp_schematic import _write_sexp_schematic
 
         schematic = Sexp([
             "kicad_sch",
@@ -308,7 +308,7 @@ class TestPartToLibSymbolDefinition:
 
     def test_basic_structure(self):
         """Verify the basic structure of a lib symbol definition."""
-        from skidl.schematics.sexp_schematic import part_to_lib_symbol_definition
+        from skidl.tools.kicad9.sexp_schematic import part_to_lib_symbol_definition
 
         r = Part("Device", "R", dest=TEMPLATE)
         r1 = r()
@@ -321,7 +321,7 @@ class TestPartToLibSymbolDefinition:
 
     def test_has_standard_properties(self):
         """Verify standard properties (Reference, Value, Footprint, Datasheet) exist."""
-        from skidl.schematics.sexp_schematic import part_to_lib_symbol_definition
+        from skidl.tools.kicad9.sexp_schematic import part_to_lib_symbol_definition
 
         r = Part("Device", "R", dest=TEMPLATE)
         r1 = r()
@@ -337,7 +337,7 @@ class TestPartToLibSymbolDefinition:
 
     def test_has_embedded_fonts(self):
         """Verify embedded_fonts is present."""
-        from skidl.schematics.sexp_schematic import part_to_lib_symbol_definition
+        from skidl.tools.kicad9.sexp_schematic import part_to_lib_symbol_definition
 
         r = Part("Device", "R", dest=TEMPLATE)
         r1 = r()
@@ -931,7 +931,7 @@ class TestCoordinateSystem:
 
     def test_y_flip_applied_in_part_to_sexp(self):
         """part_to_sexp should produce valid coordinate output."""
-        from skidl.schematics.sexp_schematic import part_to_sexp
+        from skidl.tools.kicad9.sexp_schematic import part_to_sexp
 
         set_default_tool(KICAD8)
 
@@ -981,7 +981,7 @@ class TestImportConsistency:
 
     def test_sexp_schematic_exports(self):
         """Verify all expected functions are exported from sexp_schematic."""
-        from skidl.schematics import sexp_schematic
+        from skidl.tools.kicad9 import sexp_schematic
 
         assert hasattr(sexp_schematic, "node_to_sexp_schematic")
         assert hasattr(sexp_schematic, "write_top_schematic")

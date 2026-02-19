@@ -15,7 +15,7 @@ from collections import Counter
 from skidl.geometry import BBox, Point, Tx, Vector
 from skidl.scriptinfo import get_script_name
 from skidl.schematics.net_terminal import NetTerminal
-from skidl.schematics.sexp_schematic import write_top_schematic
+from skidl.tools.kicad9.sexp_schematic import write_top_schematic
 from skidl.utilities import export_to_all, rmv_attr
 from .bboxes import calc_symbol_bbox, calc_hier_label_bbox
 
