@@ -869,26 +869,5 @@ def _write_sexp_schematic(schematic, filepath):
     schematic.add_quotes(need_quote)
     schematic.add_quotes(need_quote_alternate, stop_idx=2)
 
-    # Fix inner quotes that add_quotes doesn't escape.
-    _escape_inner_quotes(schematic)
-
     with open(filepath, "w") as f:
         f.write(schematic.to_str())
-
-
-def _escape_inner_quotes(sexp):
-    """Escape double quotes inside already-quoted S-expression strings.
-
-    simp_sexp's add_quotes() wraps strings in double quotes but doesn't
-    escape inner quotes, producing invalid output like:
-        (property "Description" "label with name "GND" , ground")
-    This walks the tree and fixes them to:
-        (property "Description" "label with name \\"GND\\" , ground")
-    """
-    for i, item in enumerate(sexp):
-        if isinstance(item, list):
-            _escape_inner_quotes(item)
-        elif isinstance(item, str) and item.startswith('"') and item.endswith('"'):
-            inner = item[1:-1]
-            if '"' in inner:
-                sexp[i] = '"' + inner.replace('"', '\\"') + '"'
