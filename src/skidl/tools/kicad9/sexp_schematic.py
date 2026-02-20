@@ -40,6 +40,16 @@ def _gen_uuid(name=""):
     return str(uuid.uuid5(_NAMESPACE_UUID, name))
 
 
+def _round_mm(val, ndigits=2):
+    """Round a value to *ndigits* decimal places for mm output.
+
+    KiCad 9 uses mm with decimal precision.  The old integer .round()
+    was fine for kicad5 (mils) but destroys sub-mm precision needed
+    for pin-to-wire alignment in KiCad 9.
+    """
+    return round(val, ndigits)
+
+
 # ---------------------------------------------------------------------------
 # Paper sizes
 # ---------------------------------------------------------------------------
@@ -91,7 +101,7 @@ def part_to_sexp(part, tx=Tx()):
     """
     part_tx = getattr(part, "tx", Tx())
     tx = part_tx * tx
-    origin = tx.origin.round()
+    origin = Point(_round_mm(tx.origin.x), _round_mm(tx.origin.y))
     unit_num = getattr(part, "num", 1)
 
     lib_name = (
@@ -360,14 +370,16 @@ def wire_to_sexp(net, wire, tx=Tx()):
     """
     wires = []
     for segment in wire:
-        w = (segment * tx).round()
+        w = segment * tx
+        x1, y1 = _round_mm(w.p1.x), _round_mm(w.p1.y)
+        x2, y2 = _round_mm(w.p2.x), _round_mm(w.p2.y)
         wires.append(
             Sexp(
                 [
                     "wire",
-                    ["pts", ["xy", w.p1.x, w.p1.y], ["xy", w.p2.x, w.p2.y]],
+                    ["pts", ["xy", x1, y1], ["xy", x2, y2]],
                     ["stroke", ["width", 0], ["type", "default"]],
-                    ["uuid", _gen_uuid(f"wire:{net.name}:{w.p1.x}:{w.p1.y}")],
+                    ["uuid", _gen_uuid(f"wire:{net.name}:{x1}:{y1}")],
                 ]
             )
         )
@@ -387,22 +399,23 @@ def junction_to_sexp(net, junctions, tx=Tx()):
     """
     result = []
     for junction in junctions:
-        pt = (junction * tx).round()
+        pt = junction * tx
+        x, y = _round_mm(pt.x), _round_mm(pt.y)
         result.append(
             Sexp(
                 [
                     "junction",
-                    ["at", pt.x, pt.y],
+                    ["at", x, y],
                     ["diameter", 0],
                     ["color", 0, 0, 0, 0],
-                    ["uuid", _gen_uuid(f"junction:{pt.x}:{pt.y}")],
+                    ["uuid", _gen_uuid(f"junction:{x}:{y}")],
                 ]
             )
         )
     return result
 
 
-def net_label_to_sexp(pin, tx=Tx()):
+def net_label_to_sexp(pin, tx=Tx(), force=False):
     """Create S-expression for a net label at a pin stub.
 
     Generates a local label if all connected pins share a common hierarchy
@@ -411,42 +424,42 @@ def net_label_to_sexp(pin, tx=Tx()):
     Args:
         pin: Pin with net connection.
         tx: Transformation matrix.
+        force: If True, skip the stub check (used for NetTerminal pins
+            which always need a label regardless of stub state).
 
     Returns:
         Sexp or None: Label S-expression, or None if no label needed.
     """
-    if not pin.stub or not pin.is_connected():
+    if not force and (not pin.stub or not pin.is_connected()):
         return None
 
-    # Determine label type based on hierarchy span.
-    label_type = "label"
-    pin_hier = pin.part.hiertuple
-    for pn in pin.net.pins:
-        pn_hier = pn.part.hiertuple
-        if pin_hier[: len(pn_hier)] == pn_hier:
-            continue
-        if pn_hier[: len(pin_hier)] == pin_hier:
-            continue
-        label_type = "global_label"
-        break
+    # Use global_label for reliable connectivity.  KiCad 9's ERC treats
+    # plain labels as dangling unless they sit in the interior of a wire
+    # segment between two connection points.  global_label connects at
+    # any pin or wire endpoint, producing only an informational "not
+    # connected elsewhere" warning on single-sheet designs.
+    label_type = "global_label"
 
     # Position at pin location (Y-flip is already in sheet_tx).
     part_tx = getattr(pin.part, "tx", Tx())
     tx = part_tx * tx
     pin_pt = getattr(pin, "pt", Point(pin.x, pin.y))
-    pt = (pin_pt * tx).round()
+    pt = pin_pt * tx
 
     # Map pin orientation to angle (degrees).
     orient_map = {"R": 0, "D": 90, "L": 180, "U": 270}
     angle = orient_map.get(pin.orientation, 0)
 
+    # Justify depends on label direction.
+    justify = "left" if angle in (0, 90) else "right"
+
     label = Sexp(
         [
             label_type,
             pin.net.name,
-            ["at", pt.x, pt.y, angle],
-            ["fields_autoplaced", "yes"],
-            ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]],
+            ["shape", "bidirectional"],
+            ["at", _round_mm(pt.x), _round_mm(pt.y), angle],
+            ["effects", ["font", ["size", 1.27, 1.27]], ["justify", justify]],
             ["uuid", _gen_uuid(f"label:{pin.net.name}:{pt.x}:{pt.y}")],
         ]
     )
@@ -488,14 +501,18 @@ def create_hierarchical_sheet_sexp(node, sheet_tx):
     Returns:
         Sexp: Sheet S-expression.
     """
-    bbox = (node.bbox * node.tx * sheet_tx).round()
+    bbox = node.bbox * node.tx * sheet_tx
+    bx = _round_mm(bbox.ll.x)
+    by = _round_mm(bbox.ll.y)
+    bw = _round_mm(bbox.w)
+    bh = _round_mm(bbox.h)
     sheet_uuid = _gen_uuid(f"sheet:{node.sheet_filename}")
 
     sheet = Sexp(
         [
             "sheet",
-            ["at", bbox.ll.x, bbox.ll.y],
-            ["size", bbox.w, bbox.h],
+            ["at", bx, by],
+            ["size", bw, bh],
             ["exclude_from_sim", "no"],
             ["in_bom", "yes"],
             ["on_board", "yes"],
@@ -508,7 +525,7 @@ def create_hierarchical_sheet_sexp(node, sheet_tx):
                 "property",
                 "Sheetname",
                 node.name,
-                ["at", bbox.ll.x, bbox.ll.y - 0.7116, 0],
+                ["at", bx, _round_mm(by - 0.7116), 0],
                 [
                     "effects",
                     ["font", ["size", 1.27, 1.27]],
@@ -519,7 +536,7 @@ def create_hierarchical_sheet_sexp(node, sheet_tx):
                 "property",
                 "Sheetfile",
                 node.sheet_filename,
-                ["at", bbox.ll.x, bbox.ll.y + bbox.h + 0.5846, 0],
+                ["at", bx, _round_mm(by + bh + 0.5846), 0],
                 ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left", "top"]],
             ],
         ]
@@ -557,6 +574,15 @@ def _calc_sheet_tx(bbox):
         (page_bbox.ll.y + page_bbox.ur.y) / 2,
     )
     move = page_ctr - content_ctr
+
+    # Snap centering offset to KiCad's 1.27mm grid (50 mils) so that
+    # grid-aligned placement coordinates stay on-grid after the move.
+    GRID_MM = 1.27
+    move = Point(
+        round(move.x / GRID_MM) * GRID_MM,
+        round(move.y / GRID_MM) * GRID_MM,
+    )
+
     tx = Tx(a=MILS_TO_MM, d=-MILS_TO_MM).move(move)
 
     return tx, paper
@@ -618,7 +644,7 @@ def node_to_sexp_schematic(node, sheet_tx=Tx(), version=20230409):
     for part in node.parts:
         if isinstance(part, NetTerminal):
             # NetTerminals become net labels.
-            label = net_label_to_sexp(part.pins[0], tx=tx)
+            label = net_label_to_sexp(part.pins[0], tx=tx, force=True)
             if label:
                 elements.append(label)
         else:
@@ -719,7 +745,7 @@ def write_top_schematic(circuit, node, filepath, top_name, title, version=202304
     # Generate part S-expressions for root-level parts.
     for part in node.parts:
         if isinstance(part, NetTerminal):
-            label = net_label_to_sexp(part.pins[0], tx=sheet_tx)
+            label = net_label_to_sexp(part.pins[0], tx=sheet_tx, force=True)
             if label:
                 elements.append(label)
         else:
@@ -833,6 +859,8 @@ def _write_sexp_schematic(schematic, filepath):
             "number",
             "lib_id",
             "reference",
+            "label",
+            "global_label",
         )
 
     def need_quote_alternate(x):

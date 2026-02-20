@@ -6,16 +6,9 @@
 Calculate bounding boxes for part symbols and hierarchical sheets.
 """
 
-from skidl.geometry import (
-    BBox,
-    Point,
-    Tx,
-    tx_rot_0,
-    tx_rot_90,
-    tx_rot_180,
-    tx_rot_270,
-)
+from skidl.geometry import BBox, Point, Tx, tx_rot_0, tx_rot_90, tx_rot_180, tx_rot_270
 from skidl.utilities import export_to_all
+
 from .constants import HIER_TERM_SIZE, PIN_LABEL_FONT_SIZE
 
 # Character size fudge factor used in draw_cmd_to_svg.
@@ -190,9 +183,7 @@ def _calc_draw_cmd_bbox(draw_cmd):
             if num_size[0] > 0 and num_size[1] > 0 and num_text:
                 num_char_wid = num_size[0] * CHAR_SIZE_FUDGE
                 num_char_hgt = num_size[1] * CHAR_SIZE_FUDGE
-                bbox += _text_bbox(
-                    num_text, end, dir_vec, num_char_wid, num_char_hgt
-                )
+                bbox += _text_bbox(num_text, end, dir_vec, num_char_wid, num_char_hgt)
 
         return bbox
 
@@ -279,19 +270,26 @@ def _draw_cmd_to_dict(symbol):
     return name, d
 
 
+# KiCad 9 symbol libraries use mm, but the placement engine uses mils.
+# Scale factor to convert mm → mils at the input boundary.
+_MM_TO_MILS = 1 / 0.0254
+_mm_to_mils_tx = Tx(a=_MM_TO_MILS, d=_MM_TO_MILS)
+
+
 @export_to_all
 def calc_symbol_bbox(part, **options):
     """Return the bounding box of the part symbol.
 
     Calculates bounding box from the symbol's draw_cmds including pins,
     graphical objects (polyline, circle, rectangle, arc), and text.
+    Coordinates are converted from library mm to placement-engine mils.
 
     Args:
         part: Part object for which a bounding box will be created.
         options (dict): Various options to control bounding box calculation.
 
     Returns:
-        List of BBoxes: [overall_bbox, unit1_bbox, unit2_bbox, ...].
+        List of BBoxes: [overall_bbox, unit1_bbox, unit2_bbox, ...] in mils.
     """
 
     bboxes = [BBox()]  # Overall bbox at index 0
@@ -320,6 +318,8 @@ def calc_symbol_bbox(part, **options):
                     cmd_bbox = _calc_draw_cmd_bbox(cmd)
                     unit.bbox.add(cmd_bbox)
 
+        # Convert from library mm to placement-engine mils.
+        unit.bbox = unit.bbox * _mm_to_mils_tx
         bboxes[0].add(unit.bbox)
         bboxes.append(unit.bbox)
 
@@ -334,6 +334,8 @@ def calc_symbol_bbox(part, **options):
                 cmd_bbox = _calc_draw_cmd_bbox(cmd)
                 bbox.add(cmd_bbox)
 
+        # Convert from library mm to placement-engine mils.
+        bbox = bbox * _mm_to_mils_tx
         part.bbox = bbox
         bboxes[0] = bbox
         bboxes.append(bbox)
