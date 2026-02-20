@@ -19,13 +19,12 @@ Sources:
 import copy
 import datetime
 import os
-import time
 import uuid
 from collections import OrderedDict
 
 from simp_sexp import Sexp
 
-from skidl.geometry import BBox, Point, Tx, Vector, tx_flip_y
+from skidl.geometry import Point, Tx
 from skidl.pckg_info import __version__
 from skidl.schematics.net_terminal import NetTerminal
 from skidl.utilities import export_to_all
@@ -45,13 +44,15 @@ def _gen_uuid(name=""):
 # Paper sizes
 # ---------------------------------------------------------------------------
 
-A_SIZES = OrderedDict([
-    ("A4", (297, 210)),
-    ("A3", (420, 297)),
-    ("A2", (594, 420)),
-    ("A1", (841, 594)),
-    ("A0", (1189, 841)),
-])
+A_SIZES = OrderedDict(
+    [
+        ("A4", (297, 210)),
+        ("A3", (420, 297)),
+        ("A2", (594, 420)),
+        ("A1", (841, 594)),
+        ("A0", (1189, 841)),
+    ]
+)
 
 
 def _pick_paper_size(bbox):
@@ -75,11 +76,11 @@ def _pick_paper_size(bbox):
 # Part → S-expression
 # ---------------------------------------------------------------------------
 
+
 def part_to_sexp(part, tx=Tx()):
     """Create S-expression for a symbol instance.
 
-    Applies coordinate correction: tx_flip_y * part_tx * tx
-    (placement engine uses Y-up; KiCad uses Y-down).
+    Applies part transform and sheet transform (Y-flip is in sheet_tx).
 
     Args:
         part: SKiDL Part object (placed).
@@ -89,86 +90,146 @@ def part_to_sexp(part, tx=Tx()):
         Sexp: Symbol S-expression.
     """
     part_tx = getattr(part, "tx", Tx())
-    tx = tx_flip_y * part_tx * tx
+    tx = part_tx * tx
     origin = tx.origin.round()
     unit_num = getattr(part, "num", 1)
 
-    lib_name = os.path.splitext(part.lib.filename)[0] if hasattr(part.lib, "filename") and part.lib.filename else "Device"
+    lib_name = (
+        os.path.splitext(part.lib.filename)[0]
+        if hasattr(part.lib, "filename") and part.lib.filename
+        else "Device"
+    )
     part_name = part.name or "Unknown"
     lib_id = f"{lib_name}:{part_name}"
 
-    symbol = Sexp([
-        "symbol",
-        ["lib_id", lib_id],
-        ["at", origin.x, origin.y, 0],
-        ["unit", unit_num],
-        ["exclude_from_sim", "no"],
-        ["in_bom", "yes"],
-        ["on_board", "yes"],
-        ["dnp", "no"],
-        ["fields_autoplaced", "yes"],
-        ["uuid", _gen_uuid(part.hiername)],
-    ])
+    symbol = Sexp(
+        [
+            "symbol",
+            ["lib_id", lib_id],
+            ["at", origin.x, origin.y, 0],
+            ["unit", unit_num],
+            ["exclude_from_sim", "no"],
+            ["in_bom", "yes"],
+            ["on_board", "yes"],
+            ["dnp", "no"],
+            ["fields_autoplaced", "yes"],
+            ["uuid", _gen_uuid(part.hiername)],
+        ]
+    )
 
     # Reference
-    symbol.append(Sexp([
-        "property", "Reference", part.ref,
-        ["at", origin.x, origin.y - 2.54, 0],
-        ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]]
-    ]))
+    symbol.append(
+        Sexp(
+            [
+                "property",
+                "Reference",
+                part.ref,
+                ["at", origin.x, origin.y - 2.54, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]],
+            ]
+        )
+    )
 
     # Value
-    symbol.append(Sexp([
-        "property", "Value", str(part.value),
-        ["at", origin.x, origin.y + 2.54, 0],
-        ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]]
-    ]))
+    symbol.append(
+        Sexp(
+            [
+                "property",
+                "Value",
+                str(part.value),
+                ["at", origin.x, origin.y + 2.54, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]],
+            ]
+        )
+    )
 
     # Footprint
-    symbol.append(Sexp([
-        "property", "Footprint", getattr(part, "footprint", ""),
-        ["at", origin.x, origin.y, 0],
-        ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]
-    ]))
+    symbol.append(
+        Sexp(
+            [
+                "property",
+                "Footprint",
+                getattr(part, "footprint", ""),
+                ["at", origin.x, origin.y, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
+            ]
+        )
+    )
 
     # Datasheet
-    symbol.append(Sexp([
-        "property", "Datasheet", getattr(part, "datasheet", "~") or "~",
-        ["at", origin.x, origin.y, 0],
-        ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]
-    ]))
+    symbol.append(
+        Sexp(
+            [
+                "property",
+                "Datasheet",
+                getattr(part, "datasheet", "~") or "~",
+                ["at", origin.x, origin.y, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
+            ]
+        )
+    )
 
     # Description
-    symbol.append(Sexp([
-        "property", "Description", getattr(part, "description", "") or "",
-        ["at", origin.x, origin.y, 0],
-        ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]
-    ]))
+    symbol.append(
+        Sexp(
+            [
+                "property",
+                "Description",
+                getattr(part, "description", "") or "",
+                ["at", origin.x, origin.y, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
+            ]
+        )
+    )
 
     # Custom fields from part.fields dict.
     y_offset = 5.08
     if hasattr(part, "fields") and part.fields:
         for field_name, field_value in part.fields.items():
-            if field_name.lower() in ("reference", "value", "footprint", "datasheet", "description"):
+            if field_name.lower() in (
+                "reference",
+                "value",
+                "footprint",
+                "datasheet",
+                "description",
+            ):
                 continue
             if field_value and str(field_value).strip():
-                symbol.append(Sexp([
-                    "property", field_name, str(field_value),
-                    ["at", origin.x, origin.y + y_offset, 0],
-                    ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]
-                ]))
+                symbol.append(
+                    Sexp(
+                        [
+                            "property",
+                            field_name,
+                            str(field_value),
+                            ["at", origin.x, origin.y + y_offset, 0],
+                            [
+                                "effects",
+                                ["font", ["size", 1.27, 1.27]],
+                                ["hide", "yes"],
+                            ],
+                        ]
+                    )
+                )
                 y_offset += 1.27
 
     # Instances section (required by KiCad 8/9 for correct reference display).
-    symbol.append(Sexp([
-        "instances",
-        ["project", "SKiDL-Generated",
-            ["path", f"/{_gen_uuid('root_schematic')}",
-                ["reference", part.ref],
-                ["unit", unit_num]
+    symbol.append(
+        Sexp(
+            [
+                "instances",
+                [
+                    "project",
+                    "SKiDL-Generated",
+                    [
+                        "path",
+                        f"/{_gen_uuid('root_schematic')}",
+                        ["reference", part.ref],
+                        ["unit", unit_num],
+                    ],
+                ],
             ]
-        ]
-    ]))
+        )
+    )
 
     return symbol
 
@@ -176,6 +237,7 @@ def part_to_sexp(part, tx=Tx()):
 # ---------------------------------------------------------------------------
 # Library symbol definition
 # ---------------------------------------------------------------------------
+
 
 def part_to_lib_symbol_definition(part):
     """Extract library symbol definition from a part's draw_cmds.
@@ -186,12 +248,17 @@ def part_to_lib_symbol_definition(part):
     Returns:
         list: Nested list for the lib_symbols section.
     """
-    lib_name = os.path.splitext(part.lib.filename)[0] if hasattr(part.lib, "filename") and part.lib.filename else "Device"
+    lib_name = (
+        os.path.splitext(part.lib.filename)[0]
+        if hasattr(part.lib, "filename") and part.lib.filename
+        else "Device"
+    )
     part_name = part.name or "Unknown"
     lib_id = f"{lib_name}:{part_name}"
 
     symbol_def = [
-        "symbol", lib_id,
+        "symbol",
+        lib_id,
         ["pin_numbers", ["hide", "yes"]],
         ["pin_names", ["offset", 0]],
         ["exclude_from_sim", "no"],
@@ -200,33 +267,57 @@ def part_to_lib_symbol_definition(part):
     ]
 
     # Standard properties.
-    symbol_def.extend([
-        ["property", "Reference", part.ref_prefix or "U",
-            ["at", 2.032, 0, 90],
-            ["effects", ["font", ["size", 1.27, 1.27]]]],
-        ["property", "Value", part_name,
-            ["at", 0, 0, 90],
-            ["effects", ["font", ["size", 1.27, 1.27]]]],
-        ["property", "Footprint", "",
-            ["at", 0, 0, 0],
-            ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]],
-        ["property", "Datasheet", getattr(part, "datasheet", "~") or "~",
-            ["at", 0, 0, 0],
-            ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]],
-    ])
+    symbol_def.extend(
+        [
+            [
+                "property",
+                "Reference",
+                part.ref_prefix or "U",
+                ["at", 2.032, 0, 90],
+                ["effects", ["font", ["size", 1.27, 1.27]]],
+            ],
+            [
+                "property",
+                "Value",
+                part_name,
+                ["at", 0, 0, 90],
+                ["effects", ["font", ["size", 1.27, 1.27]]],
+            ],
+            [
+                "property",
+                "Footprint",
+                "",
+                ["at", 0, 0, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
+            ],
+            [
+                "property",
+                "Datasheet",
+                getattr(part, "datasheet", "~") or "~",
+                ["at", 0, 0, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
+            ],
+        ]
+    )
 
     if hasattr(part, "description") and part.description:
-        symbol_def.append([
-            "property", "Description", part.description,
-            ["at", 0, 0, 0],
-            ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]]
-        ])
+        symbol_def.append(
+            [
+                "property",
+                "Description",
+                part.description,
+                ["at", 0, 0, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
+            ]
+        )
 
     # Process draw_cmds into sub-symbols.
     if hasattr(part, "draw_cmds") and part.draw_cmds:
         # Common graphics (unit 0).
         if 0 in part.draw_cmds:
-            graphics = [copy.deepcopy(cmd) for cmd in part.draw_cmds[0] if cmd[0] != "pin"]
+            graphics = [
+                copy.deepcopy(cmd) for cmd in part.draw_cmds[0] if cmd[0] != "pin"
+            ]
             if graphics:
                 symbol_def.append(["symbol", f"{part_name}_0_1"] + graphics)
 
@@ -235,7 +326,11 @@ def part_to_lib_symbol_definition(part):
             if unit_num == 0:
                 continue
             pin_cmds = [copy.deepcopy(cmd) for cmd in draw_cmds if cmd[0] == "pin"]
-            graphics = [copy.deepcopy(cmd) for cmd in draw_cmds if cmd[0] not in ("pin", "property")]
+            graphics = [
+                copy.deepcopy(cmd)
+                for cmd in draw_cmds
+                if cmd[0] not in ("pin", "property")
+            ]
             if pin_cmds or graphics:
                 unit_sym = ["symbol", f"{part_name}_{unit_num}_{unit_num}"]
                 unit_sym.extend(graphics)
@@ -251,6 +346,7 @@ def part_to_lib_symbol_definition(part):
 # Wires, junctions, net labels
 # ---------------------------------------------------------------------------
 
+
 def wire_to_sexp(net, wire, tx=Tx()):
     """Create S-expression for wire segments.
 
@@ -265,12 +361,16 @@ def wire_to_sexp(net, wire, tx=Tx()):
     wires = []
     for segment in wire:
         w = (segment * tx).round()
-        wires.append(Sexp([
-            "wire",
-            ["pts", ["xy", w.p1.x, w.p1.y], ["xy", w.p2.x, w.p2.y]],
-            ["stroke", ["width", 0], ["type", "default"]],
-            ["uuid", _gen_uuid(f"wire:{net.name}:{w.p1.x}:{w.p1.y}")]
-        ]))
+        wires.append(
+            Sexp(
+                [
+                    "wire",
+                    ["pts", ["xy", w.p1.x, w.p1.y], ["xy", w.p2.x, w.p2.y]],
+                    ["stroke", ["width", 0], ["type", "default"]],
+                    ["uuid", _gen_uuid(f"wire:{net.name}:{w.p1.x}:{w.p1.y}")],
+                ]
+            )
+        )
     return wires
 
 
@@ -288,13 +388,17 @@ def junction_to_sexp(net, junctions, tx=Tx()):
     result = []
     for junction in junctions:
         pt = (junction * tx).round()
-        result.append(Sexp([
-            "junction",
-            ["at", pt.x, pt.y],
-            ["diameter", 0],
-            ["color", 0, 0, 0, 0],
-            ["uuid", _gen_uuid(f"junction:{pt.x}:{pt.y}")]
-        ]))
+        result.append(
+            Sexp(
+                [
+                    "junction",
+                    ["at", pt.x, pt.y],
+                    ["diameter", 0],
+                    ["color", 0, 0, 0, 0],
+                    ["uuid", _gen_uuid(f"junction:{pt.x}:{pt.y}")],
+                ]
+            )
+        )
     return result
 
 
@@ -319,16 +423,16 @@ def net_label_to_sexp(pin, tx=Tx()):
     pin_hier = pin.part.hiertuple
     for pn in pin.net.pins:
         pn_hier = pn.part.hiertuple
-        if pin_hier[:len(pn_hier)] == pn_hier:
+        if pin_hier[: len(pn_hier)] == pn_hier:
             continue
-        if pn_hier[:len(pin_hier)] == pin_hier:
+        if pn_hier[: len(pin_hier)] == pin_hier:
             continue
         label_type = "global_label"
         break
 
-    # Position at pin location with Y-flip correction.
+    # Position at pin location (Y-flip is already in sheet_tx).
     part_tx = getattr(pin.part, "tx", Tx())
-    tx = tx_flip_y * part_tx * tx
+    tx = part_tx * tx
     pin_pt = getattr(pin, "pt", Point(pin.x, pin.y))
     pt = (pin_pt * tx).round()
 
@@ -336,14 +440,16 @@ def net_label_to_sexp(pin, tx=Tx()):
     orient_map = {"R": 0, "D": 90, "L": 180, "U": 270}
     angle = orient_map.get(pin.orientation, 0)
 
-    label = Sexp([
-        label_type,
-        pin.net.name,
-        ["at", pt.x, pt.y, angle],
-        ["fields_autoplaced", "yes"],
-        ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]],
-        ["uuid", _gen_uuid(f"label:{pin.net.name}:{pt.x}:{pt.y}")]
-    ])
+    label = Sexp(
+        [
+            label_type,
+            pin.net.name,
+            ["at", pt.x, pt.y, angle],
+            ["fields_autoplaced", "yes"],
+            ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]],
+            ["uuid", _gen_uuid(f"label:{pin.net.name}:{pt.x}:{pt.y}")],
+        ]
+    )
 
     return label
 
@@ -351,6 +457,7 @@ def net_label_to_sexp(pin, tx=Tx()):
 # ---------------------------------------------------------------------------
 # Title block
 # ---------------------------------------------------------------------------
+
 
 def create_title_block_sexp(title):
     """Create a title block S-expression."""
@@ -370,6 +477,7 @@ def create_title_block_sexp(title):
 # Hierarchical sheet reference
 # ---------------------------------------------------------------------------
 
+
 def create_hierarchical_sheet_sexp(node, sheet_tx):
     """Create a hierarchical sheet S-expression for insertion into a parent sheet.
 
@@ -383,25 +491,39 @@ def create_hierarchical_sheet_sexp(node, sheet_tx):
     bbox = (node.bbox * node.tx * sheet_tx).round()
     sheet_uuid = _gen_uuid(f"sheet:{node.sheet_filename}")
 
-    sheet = Sexp([
-        "sheet",
-        ["at", bbox.ll.x, bbox.ll.y],
-        ["size", bbox.w, bbox.h],
-        ["exclude_from_sim", "no"],
-        ["in_bom", "yes"],
-        ["on_board", "yes"],
-        ["dnp", "no"],
-        ["fields_autoplaced", "yes"],
-        ["stroke", ["width", 0.1524], ["type", "solid"]],
-        ["fill", ["color", 0, 0, 0, 0.0]],
-        ["uuid", sheet_uuid],
-        ["property", "Sheetname", node.name,
-            ["at", bbox.ll.x, bbox.ll.y - 0.7116, 0],
-            ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left", "bottom"]]],
-        ["property", "Sheetfile", node.sheet_filename,
-            ["at", bbox.ll.x, bbox.ll.y + bbox.h + 0.5846, 0],
-            ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left", "top"]]],
-    ])
+    sheet = Sexp(
+        [
+            "sheet",
+            ["at", bbox.ll.x, bbox.ll.y],
+            ["size", bbox.w, bbox.h],
+            ["exclude_from_sim", "no"],
+            ["in_bom", "yes"],
+            ["on_board", "yes"],
+            ["dnp", "no"],
+            ["fields_autoplaced", "yes"],
+            ["stroke", ["width", 0.1524], ["type", "solid"]],
+            ["fill", ["color", 0, 0, 0, 0.0]],
+            ["uuid", sheet_uuid],
+            [
+                "property",
+                "Sheetname",
+                node.name,
+                ["at", bbox.ll.x, bbox.ll.y - 0.7116, 0],
+                [
+                    "effects",
+                    ["font", ["size", 1.27, 1.27]],
+                    ["justify", "left", "bottom"],
+                ],
+            ],
+            [
+                "property",
+                "Sheetfile",
+                node.sheet_filename,
+                ["at", bbox.ll.x, bbox.ll.y + bbox.h + 0.5846, 0],
+                ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left", "top"]],
+            ],
+        ]
+    )
 
     return sheet
 
@@ -410,42 +532,32 @@ def create_hierarchical_sheet_sexp(node, sheet_tx):
 # Sheet-level transform calculation (mirrors kicad5 calc_sheet_tx)
 # ---------------------------------------------------------------------------
 
+MILS_TO_MM = 0.0254
+
+
 def _calc_sheet_tx(bbox):
     """Calculate transformation matrix for placing circuitry in a sheet.
 
-    Scales and translates the bounding box to fit a standard page, with
-    the Y-flip to convert from placement coords to KiCad coords.
+    Mirrors the kicad5 calc_sheet_tx pattern:
+      1. Y-flip via d=-1 (placement engine is Y-up, KiCad is Y-down)
+      2. Mils-to-mm conversion via a/d scaling (KiCad 9 uses mm)
+      3. Center content on the chosen paper size
+
+    The Y-flip is built into this transform so callers must NOT apply
+    tx_flip_y separately (that would double-flip and cancel it out).
     """
-    import math
-
-    # Determine paper size and compute scale/translation.
     paper = _pick_paper_size(bbox)
-    pw, ph = A_SIZES[paper]
+    pw, ph = A_SIZES[paper]  # mm
 
-    # Convert paper dimensions from mm to mils.
-    pw_mils = pw / 0.0254
-    ph_mils = ph / 0.0254
-
-    # Handle empty/infinite bbox (empty circuit).
-    bw = abs(bbox.w) if bbox.w and not math.isinf(bbox.w) else 0
-    bh = abs(bbox.h) if bbox.h and not math.isinf(bbox.h) else 0
-
-    # Compute scale so content fits on page with margins.
-    margin = 1000  # mils
-    content_w = max(bw, 1)
-    content_h = max(bh, 1)
-    scale_x = (pw_mils - 2 * margin) / content_w
-    scale_y = (ph_mils - 2 * margin) / content_h
-    scale = min(scale_x, scale_y, 1.0)  # Never scale up.
-
-    # Translate so content is centered.
-    if bw > 0 and bh > 0:
-        cx = (bbox.ll.x + bbox.ur.x) / 2
-        cy = (bbox.ll.y + bbox.ur.y) / 2
-    else:
-        cx, cy = 0, 0
-    tx = Tx(a=scale, b=0, c=0, d=-scale)  # Includes Y-flip.
-    tx = tx.move(Point(pw_mils / 2 - cx * scale, ph_mils / 2 + cy * scale))
+    # Apply Y-flip + mils→mm in one transform, then center on page.
+    page_bbox = bbox * Tx(a=MILS_TO_MM, d=-MILS_TO_MM)
+    page_ctr = Point(pw / 2, ph / 2)
+    content_ctr = Point(
+        (page_bbox.ll.x + page_bbox.ur.x) / 2,
+        (page_bbox.ll.y + page_bbox.ur.y) / 2,
+    )
+    move = page_ctr - content_ctr
+    tx = Tx(a=MILS_TO_MM, d=-MILS_TO_MM).move(move)
 
     return tx, paper
 
@@ -453,6 +565,7 @@ def _calc_sheet_tx(bbox):
 # ---------------------------------------------------------------------------
 # Recursive hierarchy walker — node_to_sexp_schematic
 # ---------------------------------------------------------------------------
+
 
 def _fix_sheet_filename(node):
     """Ensure node.sheet_filename uses .kicad_sch extension (SchNode defaults to .sch)."""
@@ -539,14 +652,16 @@ def node_to_sexp_schematic(node, sheet_tx=Tx(), version=20230409):
     for lib_id, part in lib_symbols.items():
         lib_symbols_sexp.append(Sexp(part_to_lib_symbol_definition(part)))
 
-    schematic = Sexp([
-        "kicad_sch",
-        ["version", version],
-        ["generator", "skidl"],
-        ["generator_version", __version__],
-        ["uuid", _gen_uuid(f"sheet:{node.sheet_filename}")],
-        ["paper", paper if not node.flattened else "A3"],
-    ])
+    schematic = Sexp(
+        [
+            "kicad_sch",
+            ["version", version],
+            ["generator", "skidl"],
+            ["generator_version", __version__],
+            ["uuid", _gen_uuid(f"sheet:{node.sheet_filename}")],
+            ["paper", paper if not node.flattened else "A3"],
+        ]
+    )
     schematic.append(Sexp(create_title_block_sexp(node.title)))
     schematic.append(lib_symbols_sexp)
 
@@ -564,6 +679,7 @@ def node_to_sexp_schematic(node, sheet_tx=Tx(), version=20230409):
 # ---------------------------------------------------------------------------
 # Top-level schematic assembly + write
 # ---------------------------------------------------------------------------
+
 
 @export_to_all
 def write_top_schematic(circuit, node, filepath, top_name, title, version=20230409):
@@ -633,14 +749,16 @@ def write_top_schematic(circuit, node, filepath, top_name, title, version=202304
 
     root_uuid = _gen_uuid("root_schematic")
 
-    schematic = Sexp([
-        "kicad_sch",
-        ["version", version],
-        ["generator", "skidl"],
-        ["generator_version", __version__],
-        ["uuid", root_uuid],
-        ["paper", paper],
-    ])
+    schematic = Sexp(
+        [
+            "kicad_sch",
+            ["version", version],
+            ["generator", "skidl"],
+            ["generator_version", __version__],
+            ["uuid", root_uuid],
+            ["paper", paper],
+        ]
+    )
     schematic.append(Sexp(create_title_block_sexp(title)))
     schematic.append(lib_symbols_sexp)
 
@@ -652,12 +770,46 @@ def write_top_schematic(circuit, node, filepath, top_name, title, version=202304
     os.makedirs(filepath, exist_ok=True)
     _write_sexp_schematic(schematic, output_file)
 
+    # Optional: validate with kicad-cli if available.
+    _validate_with_kicad_cli(output_file)
+
     return output_file
+
+
+# ---------------------------------------------------------------------------
+# Optional KiCad CLI validation
+# ---------------------------------------------------------------------------
+
+
+def _validate_with_kicad_cli(filepath):
+    """Run kicad-cli ERC on generated schematic if available."""
+    import shutil
+    import subprocess
+
+    kicad_cli = shutil.which("kicad-cli")
+    if not kicad_cli:
+        return  # Silent skip if not installed.
+    try:
+        result = subprocess.run(
+            [kicad_cli, "sch", "erc", "--exit-code-violations", filepath],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            from skidl.logger import active_logger
+
+            active_logger.warning(
+                f"KiCad ERC found issues in {filepath}:\n{result.stderr}"
+            )
+    except (subprocess.TimeoutExpired, OSError):
+        pass  # Don't fail generation if CLI has issues.
 
 
 # ---------------------------------------------------------------------------
 # File writer
 # ---------------------------------------------------------------------------
+
 
 def _write_sexp_schematic(schematic, filepath):
     """Write an Sexp schematic object to a file with proper quoting.
@@ -670,8 +822,17 @@ def _write_sexp_schematic(schematic, filepath):
     def need_quote(x):
         tag = x[0]
         return tag in (
-            "title", "date", "company", "comment", "path", "project",
-            "property", "name", "number", "lib_id", "reference",
+            "title",
+            "date",
+            "company",
+            "comment",
+            "path",
+            "project",
+            "property",
+            "name",
+            "number",
+            "lib_id",
+            "reference",
         )
 
     def need_quote_alternate(x):
