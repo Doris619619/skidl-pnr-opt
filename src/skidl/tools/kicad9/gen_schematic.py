@@ -13,11 +13,12 @@ import os
 from collections import Counter
 
 from skidl.geometry import BBox, Point, Tx, Vector
-from skidl.scriptinfo import get_script_name
 from skidl.schematics.net_terminal import NetTerminal
+from skidl.scriptinfo import get_script_name
 from skidl.tools.kicad9.sexp_schematic import write_top_schematic
 from skidl.utilities import export_to_all, rmv_attr
-from .bboxes import calc_symbol_bbox, calc_hier_label_bbox
+
+from .bboxes import calc_hier_label_bbox, calc_symbol_bbox
 
 __all__ = []
 
@@ -53,7 +54,10 @@ def preprocess_circuit(circuit, **options):
                 # Normalize pin orientation from integer degrees to string direction.
                 if isinstance(pin.orientation, int):
                     pin.orientation = deg_to_orient.get(pin.orientation % 360, "R")
-                pin.pt = Point(pin.x, pin.y)
+                # Pin coords from KiCad 9 libs are in mm; convert to mils
+                # so the placement/routing engine works in consistent units.
+                MM_TO_MILS = 1 / 0.0254
+                pin.pt = Point(pin.x * MM_TO_MILS, pin.y * MM_TO_MILS)
                 pin.routed = False
 
     def rotate_power_pins(part):
@@ -154,7 +158,7 @@ def gen_schematic(
     title="SKiDL-Generated Schematic",
     flatness=0.0,
     retries=2,
-    **options
+    **options,
 ):
     """Create a KiCad 8 schematic file from a Circuit object.
 
@@ -169,11 +173,11 @@ def gen_schematic(
     """
 
     from skidl import KICAD8
+    from skidl.logger import active_logger
     from skidl.schematics.place import PlacementFailure
     from skidl.schematics.route import RoutingFailure
-    from skidl.tools import tool_modules
     from skidl.schematics.sch_node import SchNode
-    from skidl.logger import active_logger
+    from skidl.tools import tool_modules
 
     # Part placement options that should always be turned on.
     options["use_push_pull"] = True
@@ -187,7 +191,9 @@ def gen_schematic(
     for attempt in range(retries):
         preprocess_circuit(circuit, **options)
 
-        node = SchNode(circuit, tool_modules[KICAD8], filepath, top_name, title, flatness)
+        node = SchNode(
+            circuit, tool_modules[KICAD8], filepath, top_name, title, flatness
+        )
 
         try:
             node.place(expansion_factor=expansion_factor, **options)
@@ -196,7 +202,9 @@ def gen_schematic(
         except PlacementFailure as e:
             finalize_parts_and_nets(circuit, **options)
             failure_type = e
-            active_logger.warning(f"Placement failed on attempt {attempt + 1}/{retries}: {e}")
+            active_logger.warning(
+                f"Placement failed on attempt {attempt + 1}/{retries}: {e}"
+            )
             continue
 
         except RoutingFailure as e:
