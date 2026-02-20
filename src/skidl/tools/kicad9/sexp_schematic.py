@@ -87,10 +87,33 @@ def _pick_paper_size(bbox):
 # ---------------------------------------------------------------------------
 
 
+def _extract_part_angle(part_tx):
+    """Extract rotation angle (degrees) from a part's transformation matrix.
+
+    The placement engine encodes rotation in the 2x2 matrix [a,b;c,d].
+    For a CCW rotation by θ: a=cos(θ), b=sin(θ), c=-sin(θ), d=cos(θ).
+
+    Because the sheet transform includes a Y-flip (d=-MILS_TO_MM), rotation
+    sense is reversed.  The KiCad 9 angle is therefore -θ from the placement
+    engine, normalised to one of {0, 90, 180, 270}.
+    """
+    from math import atan2, degrees
+
+    # Extract rotation from part_tx only (ignore translation).
+    angle_placement = degrees(atan2(part_tx.b, part_tx.a))
+    # Y-flip reverses rotation sense.
+    angle_kicad = -angle_placement
+    # Normalise to [0, 360) and snap to nearest 90°.
+    angle_kicad = round(angle_kicad % 360 / 90) * 90 % 360
+    return angle_kicad
+
+
 def part_to_sexp(part, tx=Tx()):
     """Create S-expression for a symbol instance.
 
     Applies part transform and sheet transform (Y-flip is in sheet_tx).
+    Adds ``(mirror y)`` because the sheet transform's Y-flip negates pin
+    Y-offsets, and KiCad must be told to mirror pin positions to match.
 
     Args:
         part: SKiDL Part object (placed).
@@ -100,6 +123,7 @@ def part_to_sexp(part, tx=Tx()):
         Sexp: Symbol S-expression.
     """
     part_tx = getattr(part, "tx", Tx())
+    angle = _extract_part_angle(part_tx)
     tx = part_tx * tx
     origin = Point(_round_mm(tx.origin.x), _round_mm(tx.origin.y))
     unit_num = getattr(part, "num", 1)
@@ -221,6 +245,12 @@ def part_to_sexp(part, tx=Tx()):
                     )
                 )
                 y_offset += 1.27
+
+    # Pin entries (required by KiCad 8/9 for connectivity tracking).
+    for pin in part.pins:
+        pin_num = str(pin.num)
+        pin_uuid = _gen_uuid(f"{part.hiername}_pin_{pin_num}")
+        symbol.append(Sexp(["pin", f'"{pin_num}"', ["uuid", pin_uuid]]))
 
     # Instances section (required by KiCad 8/9 for correct reference display).
     symbol.append(
@@ -357,32 +387,75 @@ def part_to_lib_symbol_definition(part):
 # ---------------------------------------------------------------------------
 
 
-def wire_to_sexp(net, wire, tx=Tx()):
+def wire_to_sexp(net, wire, tx=Tx(), junctions=None):
     """Create S-expression for wire segments.
+
+    Splits segments at junction points so KiCad properly connects
+    pins at wire endpoints.  Without this, a junction in the middle
+    of a wire does **not** create separate connectivity segments.
 
     Args:
         net: Net associated with the wire.
         wire: List of Segments.
         tx: Transformation matrix.
+        junctions: Optional list of junction Points (pre-transform).
 
     Returns:
         list[Sexp]: Wire S-expression objects.
     """
+
+    # Build set of junction coordinates in mm (post-transform).
+    junc_pts = set()
+    if junctions:
+        for j in junctions:
+            jt = j * tx
+            junc_pts.add((_round_mm(jt.x), _round_mm(jt.y)))
+
+    def _make_wire(x1, y1, x2, y2):
+        return Sexp(
+            [
+                "wire",
+                ["pts", ["xy", x1, y1], ["xy", x2, y2]],
+                ["stroke", ["width", 0], ["type", "default"]],
+                ["uuid", _gen_uuid(f"wire:{net.name}:{x1}:{y1}:{x2}:{y2}")],
+            ]
+        )
+
     wires = []
     for segment in wire:
         w = segment * tx
         x1, y1 = _round_mm(w.p1.x), _round_mm(w.p1.y)
         x2, y2 = _round_mm(w.p2.x), _round_mm(w.p2.y)
-        wires.append(
-            Sexp(
-                [
-                    "wire",
-                    ["pts", ["xy", x1, y1], ["xy", x2, y2]],
-                    ["stroke", ["width", 0], ["type", "default"]],
-                    ["uuid", _gen_uuid(f"wire:{net.name}:{x1}:{y1}")],
-                ]
-            )
-        )
+
+        # Collect junction points that lie strictly between endpoints.
+        splits = []
+        for jx, jy in junc_pts:
+            if x1 == x2 == jx:  # Vertical wire.
+                lo, hi = min(y1, y2), max(y1, y2)
+                if lo < jy < hi:
+                    splits.append(jy)
+            elif y1 == y2 == jy:  # Horizontal wire.
+                lo, hi = min(x1, x2), max(x1, x2)
+                if lo < jx < hi:
+                    splits.append(jx)
+
+        if not splits:
+            wires.append(_make_wire(x1, y1, x2, y2))
+        else:
+            # Split into ordered sub-segments.
+            if x1 == x2:  # Vertical – split by Y.
+                pts = sorted({y1, y2, *splits})
+                if y1 > y2:
+                    pts.reverse()
+                for a, b in zip(pts, pts[1:]):
+                    wires.append(_make_wire(x1, a, x2, b))
+            else:  # Horizontal – split by X.
+                pts = sorted({x1, x2, *splits})
+                if x1 > x2:
+                    pts.reverse()
+                for a, b in zip(pts, pts[1:]):
+                    wires.append(_make_wire(a, y1, b, y2))
+
     return wires
 
 
@@ -650,9 +723,10 @@ def node_to_sexp_schematic(node, sheet_tx=Tx(), version=20230409):
         else:
             elements.append(part_to_sexp(part, tx=tx))
 
-    # Generate wire S-expressions.
+    # Generate wire S-expressions (split at junction points).
     for net, wire in node.wires.items():
-        elements.extend(wire_to_sexp(net, wire, tx=tx))
+        net_junctions = node.junctions.get(net, [])
+        elements.extend(wire_to_sexp(net, wire, tx=tx, junctions=net_junctions))
 
     # Generate junction S-expressions.
     for net, junctions in node.junctions.items():
@@ -751,9 +825,10 @@ def write_top_schematic(circuit, node, filepath, top_name, title, version=202304
         else:
             elements.append(part_to_sexp(part, tx=sheet_tx))
 
-    # Generate wire S-expressions.
+    # Generate wire S-expressions (split at junction points).
     for net, wire in node.wires.items():
-        elements.extend(wire_to_sexp(net, wire, tx=sheet_tx))
+        net_junctions = node.junctions.get(net, [])
+        elements.extend(wire_to_sexp(net, wire, tx=sheet_tx, junctions=net_junctions))
 
     # Generate junction S-expressions.
     for net, junctions in node.junctions.items():

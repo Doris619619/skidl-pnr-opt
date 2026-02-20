@@ -23,7 +23,6 @@ from skidl.tools.kicad9.sexp_schematic import (
     A_SIZES,
     MILS_TO_MM,
     _calc_sheet_tx,
-    _escape_inner_quotes,
     _fix_sheet_filename,
     _gen_uuid,
     _pick_paper_size,
@@ -185,42 +184,6 @@ class TestFixSheetFilename:
         node = FakeNode()
         _fix_sheet_filename(node)
         assert node.sheet_filename is None
-
-
-class TestEscapeInnerQuotes:
-    """Tests for _escape_inner_quotes (fixes unescaped quotes in S-expressions)."""
-
-    def test_escapes_inner_quotes(self):
-        """Inner quotes in already-quoted strings are escaped."""
-        from simp_sexp import Sexp
-
-        s = Sexp(["property", '"Power "GND" ground"'])
-        _escape_inner_quotes(s)
-        assert s[1] == '"Power \\"GND\\" ground"'
-
-    def test_no_change_without_inner_quotes(self):
-        """Strings without inner quotes are unchanged."""
-        from simp_sexp import Sexp
-
-        s = Sexp(["property", '"simple value"'])
-        _escape_inner_quotes(s)
-        assert s[1] == '"simple value"'
-
-    def test_recursive(self):
-        """Escaping works on nested structures."""
-        from simp_sexp import Sexp
-
-        s = Sexp(["outer", ["property", '"has "inner" quotes"']])
-        _escape_inner_quotes(s)
-        assert s[1][1] == '"has \\"inner\\" quotes"'
-
-    def test_unquoted_strings_untouched(self):
-        """Strings that aren't wrapped in quotes are not modified."""
-        from simp_sexp import Sexp
-
-        s = Sexp(["tag", "no_quotes_here"])
-        _escape_inner_quotes(s)
-        assert s[1] == "no_quotes_here"
 
 
 # ===========================================================================

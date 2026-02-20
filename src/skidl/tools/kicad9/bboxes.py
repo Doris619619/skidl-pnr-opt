@@ -297,8 +297,12 @@ def calc_symbol_bbox(part, **options):
     # Get draw_cmds if available (contains graphical objects like rectangles, circles, text, etc.).
     draw_cmds = getattr(part, "draw_cmds", {})
 
-    for unit_num, unit in part.unit.items():
+    for unit_key, unit in part.unit.items():
         unit.bbox = BBox()
+
+        # Use unit.num (integer) to index into draw_cmds, since unit dict
+        # keys may be strings like 'uA' while draw_cmds uses integers.
+        unit_num = getattr(unit, "num", unit_key)
 
         # Add bounding boxes for pins from draw_cmds.
         # Also check global draw_cmds (unit 0) which may contain pins.
