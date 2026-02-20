@@ -9,7 +9,6 @@ Calculate bounding boxes for part symbols and hierarchical sheets.
 from skidl.geometry import (
     BBox,
     Point,
-    Vector,
     Tx,
     tx_rot_0,
     tx_rot_90,
@@ -27,18 +26,21 @@ def _calc_draw_cmd_bbox(draw_cmd):
     """Calculate bounding box for a symbol drawing command.
 
     Args:
-        draw_cmd: A drawing command from part.draw_cmds (list format from KiCad s-expression).
+        draw_cmd: A drawing command from part.draw_cmds (list format
+            from KiCad s-expression).
 
     Returns:
-        BBox: Bounding box for the drawing command, or empty BBox if unrecognized type.
+        BBox: Bounding box for the drawing command, or empty BBox
+            if unrecognized type.
     """
     if not draw_cmd or len(draw_cmd) < 2:
         return BBox()
 
     shape_type = draw_cmd[0].lower()
 
-    # Convert draw_cmd to dict for easier access (similar to draw_cmd_to_dict in gen_svg.py).
-    # _draw_cmd_to_dict returns (name, dict) tuple, we need the dict.
+    # Convert draw_cmd to dict for easier access (similar to
+    # draw_cmd_to_dict in gen_svg.py). _draw_cmd_to_dict returns
+    # (name, dict) tuple, we need the dict.
     _, shape = _draw_cmd_to_dict(draw_cmd)
 
     # Identity transformation for local coordinates.
@@ -48,6 +50,14 @@ def _calc_draw_cmd_bbox(draw_cmd):
         # Polyline: list of points.
         pts = shape.get("pts", {}).get("xy", [])
         if pts:
+            points = [Point(*pt[0:2]) * tx for pt in pts]
+            return BBox(*points)
+        return BBox()
+
+    elif shape_type == "bezier":
+        # Bezier curve: exactly 4 control points.
+        pts = shape.get("pts", {}).get("xy", [])
+        if pts and len(pts) >= 4:
             points = [Point(*pt[0:2]) * tx for pt in pts]
             return BBox(*points)
         return BBox()
@@ -82,6 +92,8 @@ def _calc_draw_cmd_bbox(draw_cmd):
         # Text: position and font size.
         at = shape.get("at", [0, 0, 0])
         effects = shape.get("effects", {})
+        if effects.get("hide", False):
+            return BBox()  # Hidden text has no bbox.
         font = effects.get("font", {"size": [0, 0]})
         size = font.get("size", [0, 0])
         misc = shape.get("misc", "")
@@ -90,8 +102,12 @@ def _calc_draw_cmd_bbox(draw_cmd):
         rotation = at[2] if len(at) > 2 else 0
         justify = shape.get("justify", "left").lower()
 
-        # Direction vector based on justification and rotation.
-        dir_dict = {"right": Point(1, 0), "left": Point(-1, 0), "center": Point(-1, 0)}
+        # Direction based on justification and rotation.
+        dir_dict = {
+            "right": Point(1, 0),
+            "left": Point(-1, 0),
+            "center": Point(-1, 0),
+        }
         dir = dir_dict.get(justify, Point(-1, 0)) * Tx().rot(rotation)
 
         char_wid = size[0] * CHAR_SIZE_FUDGE
@@ -100,7 +116,8 @@ def _calc_draw_cmd_bbox(draw_cmd):
         return _text_bbox(misc, start, dir, char_wid, char_hgt)
 
     elif shape_type == "property":
-        # Property (reference/value): similar to text but with different default direction.
+        # Property (reference/value): similar to text but with
+        # different default direction.
         effects = shape.get("effects", {})
         if effects.get("hide", False):
             return BBox()  # Hidden properties have no bbox.
@@ -123,8 +140,12 @@ def _calc_draw_cmd_bbox(draw_cmd):
             justify = justify[0]
         justify = justify.lower() if isinstance(justify, str) else "center"
 
-        # Direction vector: right justify extends left, left extends right.
-        dir_dict = {"right": Point(-1, 0), "left": Point(1, 0), "center": Point(-1, 0)}
+        # Direction: right justify extends left, left extends right.
+        dir_dict = {
+            "right": Point(-1, 0),
+            "left": Point(1, 0),
+            "center": Point(-1, 0),
+        }
         dir = dir_dict.get(justify, Point(-1, 0)) * Tx().rot(rotation)
 
         char_wid = size[0] * CHAR_SIZE_FUDGE
@@ -133,18 +154,44 @@ def _calc_draw_cmd_bbox(draw_cmd):
         return _text_bbox(text, start, dir, char_wid, char_hgt)
 
     elif shape_type == "pin":
-        # Pins: calculate bbox similar to _calc_pin_bbox.
-        # Extract position from "at" field.
+        # Pins: include position, length, and pin name/number text.
         at = shape.get("at", [0, 0, 0])
-        pt = Point(*at[0:2])
+        length = shape.get("length", 0)
+        rotation = at[2] if len(at) > 2 else 0
 
-        # Add space around the pin for label and margins (same as _calc_pin_bbox).
-        label_offset = 20  # mils
-        margin = Point(label_offset + 40, label_offset + 20)
-        bbox = BBox()
-        bbox.add(pt)
-        bbox.add(pt - margin)
-        bbox.add(pt + margin)
+        # Calculate start and end points of the pin.
+        start = Point(*at[0:2])
+        dir_vec = Point(1, 0) * Tx().rot(rotation)
+        end = start + dir_vec * length
+
+        bbox = BBox(start, end)
+
+        # Add bounding box for pin name text.
+        name_effects = shape.get("name", {}).get("effects", {})
+        name_font = name_effects.get("font", {"size": [0, 0]})
+        name_size = name_font.get("size", [0, 0])
+        name_text = shape.get("name", {}).get("misc", "")
+
+        if name_size[0] > 0 and name_size[1] > 0 and name_text:
+            name_char_wid = name_size[0] * CHAR_SIZE_FUDGE
+            name_char_hgt = name_size[1] * CHAR_SIZE_FUDGE
+            bbox += _text_bbox(
+                name_text, end, dir_vec, name_char_wid, name_char_hgt
+            )
+
+        # Add bounding box for pin number text.
+        num_effects = shape.get("number", {}).get("effects", {})
+        num_font = num_effects.get("font", {"size": [0, 0]})
+        num_size = num_font.get("size", [0, 0])
+        num_text = shape.get("number", {}).get("misc", "")
+
+        if num_size[0] > 0 and num_size[1] > 0 and num_text:
+            num_char_wid = num_size[0] * CHAR_SIZE_FUDGE
+            num_char_hgt = num_size[1] * CHAR_SIZE_FUDGE
+            bbox += _text_bbox(
+                num_text, end, dir_vec, num_char_wid, num_char_hgt
+            )
+
         return bbox
 
     # Unknown shape type - return empty bbox.
