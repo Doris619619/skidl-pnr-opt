@@ -166,31 +166,33 @@ def _calc_draw_cmd_bbox(draw_cmd):
 
         bbox = BBox(start, end)
 
-        # Add bounding box for pin name text.
-        name_effects = shape.get("name", {}).get("effects", {})
-        name_font = name_effects.get("font", {"size": [0, 0]})
-        name_size = name_font.get("size", [0, 0])
-        name_text = shape.get("name", {}).get("misc", "")
+        account_for_pin_text = False
+        if account_for_pin_text:
+            # Add bounding box for pin name text.
+            name_effects = shape.get("name", {}).get("effects", {})
+            name_font = name_effects.get("font", {"size": [0, 0]})
+            name_size = name_font.get("size", [0, 0])
+            name_text = shape.get("name", {}).get("misc", "")
 
-        if name_size[0] > 0 and name_size[1] > 0 and name_text:
-            name_char_wid = name_size[0] * CHAR_SIZE_FUDGE
-            name_char_hgt = name_size[1] * CHAR_SIZE_FUDGE
-            bbox += _text_bbox(
-                name_text, end, dir_vec, name_char_wid, name_char_hgt
-            )
+            if name_size[0] > 0 and name_size[1] > 0 and name_text:
+                name_char_wid = name_size[0] * CHAR_SIZE_FUDGE
+                name_char_hgt = name_size[1] * CHAR_SIZE_FUDGE
+                bbox += _text_bbox(
+                    name_text, end, dir_vec, name_char_wid, name_char_hgt
+                )
 
-        # Add bounding box for pin number text.
-        num_effects = shape.get("number", {}).get("effects", {})
-        num_font = num_effects.get("font", {"size": [0, 0]})
-        num_size = num_font.get("size", [0, 0])
-        num_text = shape.get("number", {}).get("misc", "")
+            # Add bounding box for pin number text.
+            num_effects = shape.get("number", {}).get("effects", {})
+            num_font = num_effects.get("font", {"size": [0, 0]})
+            num_size = num_font.get("size", [0, 0])
+            num_text = shape.get("number", {}).get("misc", "")
 
-        if num_size[0] > 0 and num_size[1] > 0 and num_text:
-            num_char_wid = num_size[0] * CHAR_SIZE_FUDGE
-            num_char_hgt = num_size[1] * CHAR_SIZE_FUDGE
-            bbox += _text_bbox(
-                num_text, end, dir_vec, num_char_wid, num_char_hgt
-            )
+            if num_size[0] > 0 and num_size[1] > 0 and num_text:
+                num_char_wid = num_size[0] * CHAR_SIZE_FUDGE
+                num_char_hgt = num_size[1] * CHAR_SIZE_FUDGE
+                bbox += _text_bbox(
+                    num_text, end, dir_vec, num_char_wid, num_char_hgt
+                )
 
         return bbox
 
