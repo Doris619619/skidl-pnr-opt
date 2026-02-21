@@ -135,14 +135,52 @@ def _extract_power_lib_symbol_raw(name):
 def _parse_sexp_text(text):
     """Parse an S-expression string into a nested list structure.
 
+    Handles escaped quotes inside quoted strings (e.g. ``"name \\"GND\\""``)
+    which are common in KiCad power symbol Description fields.
+
     Args:
         text: S-expression string like '(symbol "GND" (pin ...))'.
 
     Returns:
         list: Nested list suitable for Sexp().
     """
-    import re
-    tokens = re.findall(r'"[^"]*"|\(|\)|[^\s()]+', text)
+    # Tokenize: handle escaped quotes inside quoted strings.
+    tokens = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c in " \t\n\r":
+            i += 1
+        elif c == "(":
+            tokens.append("(")
+            i += 1
+        elif c == ")":
+            tokens.append(")")
+            i += 1
+        elif c == '"':
+            # Quoted string — collect until unescaped closing quote.
+            j = i + 1
+            chars = []
+            while j < len(text):
+                if text[j] == "\\" and j + 1 < len(text):
+                    chars.append(text[j + 1])
+                    j += 2
+                elif text[j] == '"':
+                    j += 1
+                    break
+                else:
+                    chars.append(text[j])
+                    j += 1
+            tokens.append(("Q", "".join(chars)))  # Tagged as quoted.
+            i = j
+        else:
+            # Unquoted token.
+            j = i
+            while j < len(text) and text[j] not in " \t\n\r()\"":
+                j += 1
+            tokens.append(text[i:j])
+            i = j
+
     stack = [[]]
     for token in tokens:
         if token == "(":
@@ -150,10 +188,10 @@ def _parse_sexp_text(text):
         elif token == ")":
             completed = stack.pop()
             stack[-1].append(completed)
-        elif token.startswith('"') and token.endswith('"'):
-            stack[-1].append(token[1:-1])  # Strip quotes.
+        elif isinstance(token, tuple) and token[0] == "Q":
+            stack[-1].append(token[1])  # Quoted string value.
         else:
-            # Try numeric conversion.
+            # Try numeric conversion for unquoted tokens.
             try:
                 stack[-1].append(int(token))
             except ValueError:
@@ -1313,6 +1351,9 @@ def _write_sexp_schematic(schematic, filepath):
 
     def need_quote(x):
         tag = x[0]
+        if tag == "symbol" and len(x) > 1 and isinstance(x[1], str):
+            # Quote lib_symbol names like "Device:R", "power:GND", "R_0_1"
+            return True
         return tag in (
             "title",
             "date",
@@ -1328,7 +1369,9 @@ def _write_sexp_schematic(schematic, filepath):
             "label",
             "global_label",
             "hierarchical_label",
-            "pin",
+            "generator",
+            "generator_version",
+            "paper",
         )
 
     def need_quote_alternate(x):
