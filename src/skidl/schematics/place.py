@@ -15,6 +15,7 @@ from collections import defaultdict
 from copy import copy
 
 from skidl import Pin
+from skidl.logger import active_logger
 from skidl.utilities import export_to_all, rmv_attr, sgn
 from .debug_draw import (
     draw_end,
@@ -1212,6 +1213,22 @@ class Placer:
             # Abort if nothing to place.
             return
 
+        # For large numbers of floating parts, skip the O(n^2) similarity
+        # computation and force-directed evolution. Just grid-place them.
+        # This avoids the 100+ second penalty for 60+ identical decoupling caps.
+        _FLOAT_GRID_THRESHOLD = 20
+        if len(parts) > _FLOAT_GRID_THRESHOLD and options.get("auto_stub", False):
+            add_placement_bboxes(parts)
+            # Simple grid layout for floating parts.
+            cols = max(1, int(len(parts) ** 0.5))
+            for i, part in enumerate(parts):
+                row, col = divmod(i, cols)
+                bbox = part.place_bbox
+                w = bbox.w if bbox.w > 0 else 200
+                h = bbox.h if bbox.h > 0 else 200
+                part.tx = Tx().move(Point(col * w * 1.2, row * h * 1.2))
+            return
+
         # Add bboxes with surrounding area so parts are not butted against each other.
         add_placement_bboxes(parts)
 
@@ -1487,6 +1504,77 @@ class Placer:
                     for p in net.get_pins():
                         p.stub = True
 
+    def _auto_stub_large_groups(node, groups, internal_nets, **options):
+        """Split oversized placement groups by stubbing 2-pin chain nets.
+
+        Large groups (e.g. 138-part LED daisy chains) overwhelm the O(n^2)
+        force-directed placer. This finds 2-pin nets within large groups and
+        stubs enough of them to break the group into smaller chunks.
+
+        Args:
+            node: The SchNode being placed.
+            groups: List of sets of parts from group_parts().
+            internal_nets: Dict mapping net id to net objects.
+            options: Dict of options; requires auto_stub=True to take effect.
+                auto_stub_max_group (int): Max parts per group. Default 30.
+        """
+        if not options.get("auto_stub", False):
+            return
+
+        max_group = options.get("auto_stub_max_group", 20)
+
+        for group in groups:
+            if len(group) <= max_group:
+                continue
+
+            # Collect low-fanout internal nets in this group (chain links
+            # and small-fanout connections). Prioritize 2-pin nets (chains),
+            # then 3-pin, then 4-pin.
+            group_ids = {id(p) for p in group}
+            chain_nets = []
+            for net in internal_nets:
+                if getattr(net, "_stub_explicit", False) or getattr(
+                    net, "stub", False
+                ):
+                    continue
+                net_parts = {
+                    id(p.part) for p in net.pins if id(p.part) in group_ids
+                }
+                if 2 <= len(net_parts) <= 4:
+                    chain_nets.append((len(net_parts), net))
+
+            # Sort by fanout (prefer stubbing 2-pin nets first).
+            chain_nets.sort(key=lambda x: x[0])
+            chain_nets = [net for _, net in chain_nets]
+
+            if not chain_nets:
+                continue
+
+            active_logger.info(
+                f"  [auto_stub_large_groups] Group of {len(group)} parts, "
+                f"{len(chain_nets)} chain nets, splitting..."
+            )
+
+            # Stub evenly-spaced chain nets to split the group into chunks
+            # of ~max_group parts. We need ceil(len/max)-1 cuts minimum.
+            n_cuts = max(1, (len(group) + max_group - 1) // max_group)
+            step = max(1, len(chain_nets) // (n_cuts + 1))
+            if step < 1:
+                step = 1
+            stubbed = 0
+
+            for i in range(step, len(chain_nets), step):
+                net = chain_nets[i]
+                net._stub = True
+                net._stub_explicit = False
+                for p in net.get_pins():
+                    p.stub = True
+                stubbed += 1
+
+            active_logger.info(
+                f"  [auto_stub_large_groups] Stubbed {stubbed} nets"
+            )
+
     def place(node, tool=None, **options):
         """Place the parts and children in this node.
 
@@ -1521,8 +1609,14 @@ class Placer:
 
             # Auto-stub nets spanning multiple placement groups.
             node._auto_stub_cross_group(connected_parts, **options)
+
+            # Split oversized groups by stubbing chain nets.
+            node._auto_stub_large_groups(
+                connected_parts, internal_nets, **options
+            )
+
             if options.get("auto_stub", False):
-                # Re-group after cross-group stubbing may have changed connectivity.
+                # Re-group after stubbing may have changed connectivity.
                 connected_parts, internal_nets, floating_parts = node.group_parts(
                     **options
                 )
@@ -1540,9 +1634,7 @@ class Placer:
             )
 
             # Remove any stuff leftover from this place & route run.
-            # print(f"added part attrs = {new_part_attrs}")
             node.rmv_placement_stuff()
-            # node.show_added_attrs()
 
             # Calculate the bounding box for the node after placement of parts and children.
             node.calc_bbox()

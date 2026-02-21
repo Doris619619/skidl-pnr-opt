@@ -47,7 +47,11 @@ def auto_stub_nets(circuit, **options):
         circuit: The Circuit object containing nets to analyze.
         options: Dict of options. Recognizes 'auto_stub_fanout' (default 5).
     """
+    import sys
+
     fanout_threshold = options.get("auto_stub_fanout", 5)
+    stubbed_power = []
+    stubbed_fanout = []
 
     for net in circuit.nets:
         if getattr(net, "_stub_explicit", False):
@@ -61,6 +65,7 @@ def auto_stub_nets(circuit, **options):
             net._stub_explicit = False
             for pin in net.get_pins():
                 pin.stub = True
+            stubbed_power.append(f"{net.name}({len(net.pins)})")
             continue
 
         # High fanout nets: many pins connected to the same net.
@@ -69,6 +74,15 @@ def auto_stub_nets(circuit, **options):
             net._stub_explicit = False
             for pin in net.get_pins():
                 pin.stub = True
+            stubbed_fanout.append(f"{net.name}({len(net.pins)})")
+
+    from skidl.logger import active_logger
+    active_logger.info(
+        f"  [auto_stub] power: {', '.join(stubbed_power[:10])}{'...' if len(stubbed_power) > 10 else ''}"
+    )
+    active_logger.info(
+        f"  [auto_stub] fanout>={fanout_threshold}: {', '.join(stubbed_fanout[:10])}{'...' if len(stubbed_fanout) > 10 else ''}"
+    )
 
 
 def _run_erc(schematic_path):
@@ -423,6 +437,22 @@ def gen_schematic(
     # Phase 1: Heuristic auto-stubbing before first generation pass.
     if options.get("auto_stub", False):
         auto_stub_nets(circuit, **options)
+
+    # For very large circuits, skip the placement/routing engine entirely
+    # and go straight to labels-only mode. The O(n^2) placer can't handle
+    # circuits with 100+ parts per subcircuit in reasonable time.
+    max_parts = options.get("auto_stub_max_parts", 100)
+    if options.get("auto_stub", False) and len(circuit.parts) > max_parts:
+        active_logger.info(
+            f"  [auto_stub] {len(circuit.parts)} parts > max_parts={max_parts}, "
+            f"using labels-only mode for speed"
+        )
+        _handle_fallback(
+            circuit, tool_modules[KICAD8], filepath, top_name,
+            title, flatness, options, active_logger,
+            reason=f"Circuit has {len(circuit.parts)} parts (threshold: {max_parts})",
+        )
+        return
 
     expansion_factor = 1.0
     failure_type = None
