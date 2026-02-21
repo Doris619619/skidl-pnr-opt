@@ -259,6 +259,33 @@ class SchNode(Placer, Router):
 
 
 
+    def get_boundary_nets(self):
+        """Return nets that connect parts inside this node to parts outside.
+
+        A boundary net has at least one pin on a part in this node and at
+        least one pin on a part NOT in this node. These nets need
+        hierarchical labels/pins when the node becomes a hierarchical sheet.
+
+        Returns:
+            list: List of boundary Net objects.
+        """
+        node_part_ids = {id(p) for p in self.parts}
+        boundary = []
+        seen = set()
+        for part in self.parts:
+            for pin in part:
+                if not pin.is_connected():
+                    continue
+                net = pin.net
+                if id(net) in seen:
+                    continue
+                seen.add(id(net))
+                # Check if any pin on this net is on a part outside this node.
+                ext_pins = [p for p in net.pins if id(p.part) not in node_part_ids]
+                if ext_pins:
+                    boundary.append(net)
+        return boundary
+
     def external_bbox(self):
         """Return the bounding box of a hierarchical sheet as seen by its parent node."""
         bbox = BBox(Point(0, 0), Point(500, 500))

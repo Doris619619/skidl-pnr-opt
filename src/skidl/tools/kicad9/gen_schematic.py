@@ -25,6 +25,29 @@ from .bboxes import calc_hier_label_bbox, calc_symbol_bbox
 
 __all__ = []
 
+
+def _setup_kicad_env():
+    """Set KICAD9_FOOTPRINT_DIR if not already set.
+
+    Auto-detects the standard KiCad footprint directory so that
+    generated schematics can reference footprints for PCB layout.
+    """
+    if not os.environ.get("KICAD9_FOOTPRINT_DIR"):
+        for path in [
+            "/usr/share/kicad/footprints",
+            "/usr/local/share/kicad/footprints",
+            os.path.expanduser("~/.local/share/kicad/9.0/footprints"),
+        ]:
+            if os.path.isdir(path):
+                os.environ["KICAD9_FOOTPRINT_DIR"] = path
+                break
+
+
+# Suppress legacy fp-lib-table warnings from older KiCad tool modules.
+import warnings
+warnings.filterwarnings("ignore", message=".*fp-lib-table.*")
+
+
 # Pattern matching common power net names.
 _POWER_NET_RE = re.compile(
     r"^(\+\d[\d.]*V[\d]*|GND|AGND|DGND|PGND|VCC|VDD|VSS|VEE|VBUS|VBAT|AVCC|AVDD|DVCC|DVDD)$",
@@ -184,6 +207,77 @@ def _stub_nets_for_erc_errors(circuit, errors):
                             stubbed_any = True
                 break
     return stubbed_any
+
+
+def _classify_and_stub_complex_nets(circuit, node, **options):
+    """Classify nets after placement: stub complex ones, keep simple ones as wires.
+
+    Called after placement succeeds, before routing. Nets with too many pins
+    or pins too far apart get converted to labels for reliable connectivity.
+    Simple 2-3 pin short-distance nets remain as wires.
+
+    Args:
+        circuit: The Circuit object.
+        node: The placed SchNode.
+        options: Dict of options including:
+            auto_stub_max_wire_pins (int): Max pins for wire routing. Default 3.
+            auto_stub_max_wire_dist (int): Max manhattan distance (mils) for wires. Default 2000.
+    """
+    from skidl.geometry import Point
+
+    max_wire_pins = options.get("auto_stub_max_wire_pins", 3)
+    max_wire_dist = options.get("auto_stub_max_wire_dist", 2000)
+
+    node_parts = set(node.parts)
+    stubbed_count = 0
+
+    for net in node.get_internal_nets():
+        if getattr(net, "_stub_explicit", False):
+            continue
+        if getattr(net, "_stub", False):
+            continue
+
+        pins = [p for p in net.pins if p.part in node_parts]
+
+        # Too many pins → label.
+        if len(pins) > max_wire_pins:
+            net._stub = True
+            net._stub_explicit = False
+            for p in net.get_pins():
+                p.stub = True
+            stubbed_count += 1
+            continue
+
+        # Pins too far apart → label.
+        if len(pins) >= 2:
+            pts = []
+            for p in pins:
+                pin_pt = getattr(p, "place_pt", getattr(p, "pt", Point(p.x, p.y)))
+                part_tx = getattr(p.part, "tx", None)
+                if part_tx:
+                    pts.append(pin_pt * part_tx)
+                else:
+                    pts.append(pin_pt)
+
+            max_dist = 0
+            for i, a in enumerate(pts):
+                for b in pts[i + 1:]:
+                    dist = abs(a.x - b.x) + abs(a.y - b.y)
+                    if dist > max_dist:
+                        max_dist = dist
+
+            if max_dist > max_wire_dist:
+                net._stub = True
+                net._stub_explicit = False
+                for p in net.get_pins():
+                    p.stub = True
+                stubbed_count += 1
+
+    if stubbed_count:
+        from skidl.logger import active_logger
+        active_logger.info(
+            f"  [selective_routing] Stubbed {stubbed_count} complex nets after placement"
+        )
 
 
 class LabelsOnlyWarning(UserWarning):
@@ -428,6 +522,8 @@ def gen_schematic(
     from skidl.schematics.sch_node import SchNode
     from skidl.tools import tool_modules
 
+    _setup_kicad_env()
+
     # Part placement options that should always be turned on.
     options["use_push_pull"] = True
     options["rotate_parts"] = True
@@ -437,22 +533,6 @@ def gen_schematic(
     # Phase 1: Heuristic auto-stubbing before first generation pass.
     if options.get("auto_stub", False):
         auto_stub_nets(circuit, **options)
-
-    # For very large circuits, skip the placement/routing engine entirely
-    # and go straight to labels-only mode. The O(n^2) placer can't handle
-    # circuits with 100+ parts per subcircuit in reasonable time.
-    max_parts = options.get("auto_stub_max_parts", 100)
-    if options.get("auto_stub", False) and len(circuit.parts) > max_parts:
-        active_logger.info(
-            f"  [auto_stub] {len(circuit.parts)} parts > max_parts={max_parts}, "
-            f"using labels-only mode for speed"
-        )
-        _handle_fallback(
-            circuit, tool_modules[KICAD8], filepath, top_name,
-            title, flatness, options, active_logger,
-            reason=f"Circuit has {len(circuit.parts)} parts (threshold: {max_parts})",
-        )
-        return
 
     expansion_factor = 1.0
     failure_type = None
@@ -466,6 +546,8 @@ def gen_schematic(
 
         try:
             node.place(expansion_factor=expansion_factor, **options)
+            if options.get("auto_stub", False):
+                _classify_and_stub_complex_nets(circuit, node, **options)
             node.route(**options)
 
         except PlacementFailure as e:
@@ -533,6 +615,8 @@ def gen_schematic(
                             flatness,
                         )
                         node.place(expansion_factor=erc_expansion, **options)
+                        if options.get("auto_stub", False):
+                            _classify_and_stub_complex_nets(circuit, node, **options)
                         node.route(**options)
                         output_file = write_top_schematic(
                             circuit, node, filepath, top_name, title, version=20230409

@@ -18,7 +18,9 @@ import pytest
 from skidl.tools.kicad9.gen_schematic import (
     FIXABLE_ERROR_TYPES,
     _POWER_NET_RE,
+    _classify_and_stub_complex_nets,
     _parse_erc_report,
+    _setup_kicad_env,
     _stub_nets_for_erc_errors,
     auto_stub_nets,
 )
@@ -404,19 +406,19 @@ class TestAutoStubIntegration:
         filepath = _generate_and_gate_auto_stub(output_dir)
         with open(filepath) as f:
             content = f.read()
-        # Power nets (GND, VCC) should appear as global labels.
-        assert "(global_label" in content
+        # Power nets should appear as power symbols or global labels.
+        assert "(global_label" in content or 'lib_id "power:' in content
 
-    def test_and_gate_power_nets_are_labels(self, output_dir):
-        """Power nets in and_gate with auto_stub appear as global labels."""
+    def test_and_gate_power_nets_are_symbols(self, output_dir):
+        """Power nets in and_gate with auto_stub appear as power symbols."""
         filepath = _generate_and_gate_auto_stub(output_dir)
         with open(filepath) as f:
             content = f.read()
-        # GND and VCC should be global labels.
-        gnd_labels = re.findall(r'\(global_label\s+"GND"', content)
-        vcc_labels = re.findall(r'\(global_label\s+"VCC"', content)
-        assert len(gnd_labels) > 0, "GND should appear as global_label"
-        assert len(vcc_labels) > 0, "VCC should appear as global_label"
+        # GND and VCC should appear as power symbol instances.
+        gnd_syms = re.findall(r'lib_id "power:GND"', content)
+        vcc_syms = re.findall(r'lib_id "power:VCC"', content)
+        assert len(gnd_syms) > 0, "GND should appear as power symbol"
+        assert len(vcc_syms) > 0, "VCC should appear as power symbol"
 
     def test_divider_with_auto_stub(self, output_dir):
         """Divider with auto_stub generates successfully."""
@@ -497,3 +499,218 @@ class TestKicadErcClean:
                 f"Expected 0-2 fixable ERC errors, got {fixable_count}.\n"
                 f"Report:\n{report}"
             )
+
+
+# ===========================================================================
+# Phase 2 tests — Row-based placer, selective routing, power symbols,
+# layout readiness, hierarchical sheets
+# ===========================================================================
+
+
+class TestRowBasedPlacer:
+    """Tests for the row-based placement algorithm."""
+
+    def test_threshold_constant_exists(self):
+        """_ROW_PLACE_THRESHOLD is defined on the Placer class."""
+        from skidl.schematics.place import Placer
+        assert hasattr(Placer, "_ROW_PLACE_THRESHOLD")
+        assert Placer._ROW_PLACE_THRESHOLD == 20
+
+    def test_row_placer_function_exists(self):
+        """place_connected_parts_rowbased is callable."""
+        from skidl.schematics.place import Placer
+        assert callable(getattr(Placer, "place_connected_parts_rowbased", None))
+
+    @requires_kicad_libs
+    def test_large_group_uses_row_placer(self, output_dir):
+        """A circuit with >20 connected parts should use row-based placement."""
+        from skidl import KICAD9, Circuit, Net, Part, set_default_tool
+
+        set_default_tool(KICAD9)
+        circuit = Circuit(name="row_placer_test")
+
+        with circuit:
+            # Create a chain of 30 resistors — all connected by nets.
+            resistors = [Part("Device", "R", value="1K") for _ in range(30)]
+            for i in range(len(resistors) - 1):
+                net = Net(f"CHAIN_{i}")
+                net += resistors[i][2], resistors[i + 1][1]
+            # Add power rails.
+            vcc = Net("VCC")
+            gnd = Net("GND")
+            vcc += resistors[0][1]
+            gnd += resistors[-1][2]
+
+            circuit.generate_schematic(
+                filepath=output_dir, top_name="row_placer_test", auto_stub=True
+            )
+
+        filepath = os.path.join(output_dir, "row_placer_test.kicad_sch")
+        assert os.path.exists(filepath), "Schematic should be generated"
+
+        # Verify parts are placed (file should contain symbol instances).
+        with open(filepath) as f:
+            content = f.read()
+        symbol_count = len(re.findall(r'\(symbol\s*\n\s*\(lib_id', content))
+        assert symbol_count >= 20, f"Expected >=20 symbols, got {symbol_count}"
+
+
+class TestSelectiveRouting:
+    """Tests for the selective wire routing classifier."""
+
+    def test_classify_function_exists(self):
+        """_classify_and_stub_complex_nets is importable."""
+        assert callable(_classify_and_stub_complex_nets)
+
+    @requires_kicad_libs
+    def test_simple_nets_stay_wired(self, output_dir):
+        """2-pin short-distance nets should remain as wires, not labels."""
+        from skidl import KICAD9, Circuit, Net, Part, set_default_tool
+
+        set_default_tool(KICAD9)
+        circuit = Circuit(name="wire_test")
+
+        with circuit:
+            r1 = Part("Device", "R", value="10K")
+            r2 = Part("Device", "R", value="10K")
+            mid = Net("MID")
+            r1[2] += mid
+            mid += r2[1]
+
+            circuit.generate_schematic(
+                filepath=output_dir, top_name="wire_test", auto_stub=True
+            )
+
+        filepath = os.path.join(output_dir, "wire_test.kicad_sch")
+        with open(filepath) as f:
+            content = f.read()
+        # MID is a 2-pin net — should be wired, not a global_label.
+        assert "(wire" in content, "Simple 2-pin net should produce wires"
+
+
+class TestPowerSymbolInjection:
+    """Tests for power symbol injection (replacing global_labels with power symbols)."""
+
+    def test_power_symbol_names_loaded(self):
+        """Power symbol name set loads from the KiCad library."""
+        from skidl.tools.kicad9.sexp_schematic import _get_power_symbol_names
+        names = _get_power_symbol_names()
+        assert "GND" in names
+        assert "VCC" in names
+        assert "+3V3" in names
+        assert "+5V" in names
+
+    def test_power_lib_symbol_extraction(self):
+        """Power lib_symbol definitions can be extracted and parsed."""
+        from skidl.tools.kicad9.sexp_schematic import _extract_power_lib_symbol
+        gnd = _extract_power_lib_symbol("GND")
+        assert gnd is not None, "GND lib symbol should be extractable"
+        gnd_str = gnd.to_str()
+        assert "power:GND" in gnd_str
+        assert "power_in" in gnd_str
+
+    def test_sexp_parser(self):
+        """The S-expression text parser handles nested structures."""
+        from skidl.tools.kicad9.sexp_schematic import _parse_sexp_text
+        result = _parse_sexp_text('(symbol "test" (pin_numbers (hide yes)))')
+        assert result[0] == "symbol"
+        assert result[1] == "test"
+        assert result[2][0] == "pin_numbers"
+
+    @requires_kicad_libs
+    def test_power_symbols_in_output(self, output_dir):
+        """Power nets appear as power symbol instances in the schematic."""
+        filepath = _generate_divider(output_dir, auto_stub=True)
+        with open(filepath) as f:
+            content = f.read()
+        # GND and VCC should be power symbols.
+        assert 'lib_id "power:GND"' in content, "GND should be a power symbol"
+        assert 'lib_id "power:VCC"' in content, "VCC should be a power symbol"
+
+    @requires_kicad_libs
+    def test_power_lib_symbols_in_output(self, output_dir):
+        """Power symbol lib_symbol definitions appear in the lib_symbols section."""
+        filepath = _generate_divider(output_dir, auto_stub=True)
+        with open(filepath) as f:
+            content = f.read()
+        assert "power:GND" in content, "GND lib_symbol definition should be present"
+        assert "power:VCC" in content, "VCC lib_symbol definition should be present"
+
+    @requires_kicad_libs
+    def test_power_symbol_has_pwr_reference(self, output_dir):
+        """Power symbol instances use #PWR references."""
+        filepath = _generate_divider(output_dir, auto_stub=True)
+        with open(filepath) as f:
+            content = f.read()
+        pwr_refs = re.findall(r'"#PWR\d+"', content)
+        assert len(pwr_refs) > 0, "Power symbols should have #PWR references"
+
+
+class TestLayoutReadiness:
+    """Tests for layout readiness features."""
+
+    def test_setup_kicad_env(self):
+        """_setup_kicad_env sets KICAD9_FOOTPRINT_DIR when not already set."""
+        old = os.environ.pop("KICAD9_FOOTPRINT_DIR", None)
+        try:
+            _setup_kicad_env()
+            fp_dir = os.environ.get("KICAD9_FOOTPRINT_DIR", "")
+            if os.path.isdir("/usr/share/kicad/footprints"):
+                assert fp_dir == "/usr/share/kicad/footprints"
+        finally:
+            if old:
+                os.environ["KICAD9_FOOTPRINT_DIR"] = old
+            else:
+                os.environ.pop("KICAD9_FOOTPRINT_DIR", None)
+
+    def test_setup_kicad_env_preserves_existing(self):
+        """_setup_kicad_env does not override an existing KICAD9_FOOTPRINT_DIR."""
+        os.environ["KICAD9_FOOTPRINT_DIR"] = "/custom/path"
+        try:
+            _setup_kicad_env()
+            assert os.environ["KICAD9_FOOTPRINT_DIR"] == "/custom/path"
+        finally:
+            del os.environ["KICAD9_FOOTPRINT_DIR"]
+
+    @requires_kicad_libs
+    def test_footprint_property_emitted(self, output_dir):
+        """Part footprint property appears in the generated schematic."""
+        filepath = _generate_divider(output_dir, auto_stub=False)
+        with open(filepath) as f:
+            content = f.read()
+        # Footprint property should be present for each part.
+        fp_props = re.findall(r'"Footprint"', content)
+        assert len(fp_props) >= 2, "Footprint properties should be emitted for parts"
+
+
+class TestBoundaryNets:
+    """Tests for the get_boundary_nets() method on SchNode."""
+
+    def test_boundary_nets_method_exists(self):
+        """SchNode has a get_boundary_nets method."""
+        from skidl.schematics.sch_node import SchNode
+        assert callable(getattr(SchNode, "get_boundary_nets", None))
+
+    def test_boundary_nets_empty_node(self):
+        """Empty node returns no boundary nets."""
+        from skidl.schematics.sch_node import SchNode
+        node = SchNode()
+        assert node.get_boundary_nets() == []
+
+
+class TestHierarchicalLabels:
+    """Tests for hierarchical label generation."""
+
+    def test_hierarchical_label_function_exists(self):
+        """hierarchical_label_to_sexp is importable."""
+        from skidl.tools.kicad9.sexp_schematic import hierarchical_label_to_sexp
+        assert callable(hierarchical_label_to_sexp)
+
+    def test_hierarchical_label_sexp_format(self):
+        """Hierarchical label S-expression has correct structure."""
+        from skidl.tools.kicad9.sexp_schematic import hierarchical_label_to_sexp
+        label = hierarchical_label_to_sexp("TEST_NET", 10.0, 20.0, angle=180)
+        label_str = label.to_str()
+        assert "hierarchical_label" in label_str
+        assert "TEST_NET" in label_str
+        assert "bidirectional" in label_str

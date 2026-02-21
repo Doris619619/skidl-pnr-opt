@@ -1142,6 +1142,97 @@ class Placer:
 
         return connected_parts, internal_nets, floating_parts
 
+    _ROW_PLACE_THRESHOLD = 20
+
+    def place_connected_parts_rowbased(node, parts, nets, **options):
+        """Place connected parts using a BFS row-based layout (O(n)).
+
+        For large groups (>_ROW_PLACE_THRESHOLD), the O(n²) force-directed
+        placer is too slow. This places parts in rows following BFS order
+        from the most-connected seed part.
+
+        Args:
+            node (Node): Node with parts.
+            parts (list): List of Parts connected by nets.
+            nets (list): List of internal Nets connecting the parts.
+            options (dict): Dict of options and values that enable/disable functions.
+        """
+        from collections import deque
+
+        if not parts:
+            return
+
+        # Add bboxes and anchor/pull pins (needed by router).
+        add_placement_bboxes(parts, **options)
+        add_anchor_pull_pins(parts, nets, **options)
+
+        # Build adjacency graph: part → set of neighbors.
+        part_set = set(parts)
+        adjacency = defaultdict(set)
+        for net in nets:
+            net_parts = [p for p in (pin.part for pin in net.pins) if p in part_set]
+            for i, p1 in enumerate(net_parts):
+                for p2 in net_parts[i + 1:]:
+                    adjacency[id(p1)].add(p2)
+                    adjacency[id(p2)].add(p1)
+
+        # Pick seed: part with most connections.
+        id_to_part = {id(p): p for p in parts}
+        seed = max(parts, key=lambda p: len(adjacency.get(id(p), set())))
+
+        # BFS traversal, placing in rows.
+        visited = {id(seed)}
+        queue = deque([seed])
+        order = []
+        while queue:
+            part = queue.popleft()
+            order.append(part)
+            for neighbor in adjacency.get(id(part), set()):
+                if id(neighbor) not in visited:
+                    visited.add(id(neighbor))
+                    queue.append(neighbor)
+
+        # Add any parts not reached by BFS (disconnected within the group).
+        for part in parts:
+            if id(part) not in visited:
+                order.append(part)
+
+        # Compute total area to determine max row width.
+        total_area = sum(
+            max(p.place_bbox.w, 1) * max(p.place_bbox.h, 1) for p in order
+        )
+        max_row_width = math.sqrt(total_area) * 2
+
+        # Place parts in rows.
+        col_x = 0
+        row_y = 0
+        row_max_h = 0
+        for part in order:
+            w = max(part.place_bbox.w, 100)
+            h = max(part.place_bbox.h, 100)
+
+            if col_x > 0 and col_x + w > max_row_width:
+                # Start new row.
+                row_y += row_max_h + BLK_INT_PAD
+                col_x = 0
+                row_max_h = 0
+
+            part.tx = Tx().move(Point(col_x, row_y))
+            col_x += w + BLK_INT_PAD
+            row_max_h = max(row_max_h, h)
+
+        # Snap to grid.
+        for part in order:
+            snap_to_grid(part)
+
+        # Place NetTerminals around the placed parts.
+        net_terminals = [p for p in parts if is_net_terminal(p)]
+        real_parts = [p for p in parts if not is_net_terminal(p)]
+        if net_terminals:
+            place_net_terminals(
+                net_terminals, real_parts, nets, total_part_force, **options
+            )
+
     def place_connected_parts(node, parts, nets, **options):
         """Place individual parts.
 
@@ -1155,6 +1246,11 @@ class Placer:
         if not parts:
             # Abort if nothing to place.
             return
+
+        # Use row-based placement for large groups.
+        real_count = sum(1 for p in parts if not is_net_terminal(p))
+        if real_count > node._ROW_PLACE_THRESHOLD:
+            return node.place_connected_parts_rowbased(parts, nets, **options)
 
         # Add bboxes with surrounding area so parts are not butted against each other.
         add_placement_bboxes(parts, **options)
@@ -1402,6 +1498,26 @@ class Placer:
 
         if not part_blocks:
             # Abort if nothing to place.
+            return
+
+        # For large block counts, use a simple grid layout instead of
+        # O(n²) force-directed placement.
+        if len(part_blocks) > node._ROW_PLACE_THRESHOLD:
+            cols = max(1, int(len(part_blocks) ** 0.5))
+            for i, blk in enumerate(part_blocks):
+                row, col = divmod(i, cols)
+                w = blk.place_bbox.w if blk.place_bbox.w > 0 else 500
+                h = blk.place_bbox.h if blk.place_bbox.h > 0 else 500
+                blk.tx = Tx().move(Point(col * (w + BLK_EXT_PAD), row * (h + BLK_EXT_PAD)))
+                snap_to_grid(blk)
+
+            # Apply the placement moves of the part blocks to their underlying sources.
+            for blk in part_blocks:
+                try:
+                    blk.src.tx = blk.tx
+                except AttributeError:
+                    for part in blk.src:
+                        part.tx *= blk.tx
             return
 
         # Start off with a random placement of part blocks.
