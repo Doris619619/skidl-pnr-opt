@@ -172,6 +172,70 @@ def _stub_nets_for_erc_errors(circuit, errors):
     return stubbed_any
 
 
+class LabelsOnlyWarning(UserWarning):
+    """Warning raised when schematic falls back to labels-only output."""
+
+    pass
+
+
+def _handle_fallback(circuit, tool_module, filepath, top_name, title, flatness,
+                     options, logger, reason=""):
+    """Handle routing failure fallback according to the auto_stub_fallback policy.
+
+    Args:
+        circuit: The Circuit object.
+        tool_module: The KiCad tool module.
+        filepath, top_name, title, flatness: Schematic generation parameters.
+        options: Dict of options including auto_stub_fallback policy.
+        logger: The active logger.
+        reason: Human-readable explanation of why we're falling back.
+    """
+    import warnings
+
+    from skidl.schematics.sch_node import SchNode
+    from skidl.tools.kicad9.sexp_schematic import write_top_schematic
+
+    fallback = options.get("auto_stub_fallback", "labels")
+
+    if fallback == "raise":
+        finalize_parts_and_nets(circuit, **options)
+        from skidl.schematics.route import RoutingFailure
+
+        raise RoutingFailure(
+            f"{reason}. Set auto_stub_fallback='labels' to produce "
+            "labels-only output instead of crashing."
+        )
+
+    # Produce labels-only output.
+    stubbed_nets = []
+    for net in circuit.nets:
+        if not getattr(net, "_stub_explicit", False) and not net._stub:
+            stubbed_nets.append(net.name)
+    _stub_all_non_explicit(circuit)
+
+    preprocess_circuit(circuit, **options)
+    node = SchNode(circuit, tool_module, filepath, top_name, title, flatness)
+    node.place(expansion_factor=1.0, **options)
+    node.route(**options)
+    output_file = write_top_schematic(
+        circuit, node, filepath, top_name, title, version=20230409
+    )
+    finalize_parts_and_nets(circuit, **options)
+
+    msg = (
+        f"{reason}. Produced labels-only schematic at {output_file}. "
+        f"Nets converted to labels: {', '.join(stubbed_nets[:10])}"
+        f"{'...' if len(stubbed_nets) > 10 else ''}. "
+        "This may mask routing issues that could be fixed by improving "
+        "the circuit layout. Set auto_stub_fallback='raise' to get the "
+        "original error instead."
+    )
+    logger.warning(msg)
+
+    if fallback == "warn":
+        warnings.warn(msg, LabelsOnlyWarning, stacklevel=4)
+
+
 def _stub_all_non_explicit(circuit):
     """Stub all nets that weren't explicitly set by the user (labels-only fallback).
 
@@ -337,6 +401,10 @@ def gen_schematic(
         auto_stub (bool): Enable heuristic auto-stubbing and ERC correction loop. Default False.
         auto_stub_fanout (int): Fanout threshold for auto-stubbing. Default 5.
         erc_max_iterations (int): Max ERC correction passes. Default 3.
+        auto_stub_fallback (str): What to do when routing fails with auto_stub enabled.
+            "labels" (default) — fall back to labels-only schematic.
+            "raise" — raise the RoutingFailure so the caller sees it.
+            "warn" — produce labels-only but also raise a warning exception.
     """
 
     from skidl import KICAD8
@@ -421,67 +489,57 @@ def gen_schematic(
                     f"ERC correction: stubbed nets for {len(fixable)} errors, regenerating (iteration {erc_attempt + 1})"
                 )
 
-                # Full regeneration through the pipeline.
-                try:
-                    preprocess_circuit(circuit, **options)
-                    node = SchNode(
-                        circuit,
-                        tool_modules[KICAD8],
-                        filepath,
-                        top_name,
-                        title,
-                        flatness,
+                # Full regeneration — try with expansion before giving up.
+                erc_regen_ok = False
+                for erc_expansion in [1.0, 1.5, 2.25]:
+                    try:
+                        preprocess_circuit(circuit, **options)
+                        node = SchNode(
+                            circuit,
+                            tool_modules[KICAD8],
+                            filepath,
+                            top_name,
+                            title,
+                            flatness,
+                        )
+                        node.place(expansion_factor=erc_expansion, **options)
+                        node.route(**options)
+                        output_file = write_top_schematic(
+                            circuit, node, filepath, top_name, title, version=20230409
+                        )
+                        finalize_parts_and_nets(circuit, **options)
+                        erc_regen_ok = True
+                        break
+                    except (RoutingFailure, PlacementFailure) as inner_e:
+                        finalize_parts_and_nets(circuit, **options)
+                        if erc_expansion < 2.25:
+                            active_logger.info(
+                                f"ERC regeneration routing failed at {erc_expansion}x, "
+                                f"trying {erc_expansion * 1.5}x expansion"
+                            )
+                        else:
+                            active_logger.warning(
+                                f"ERC regeneration routing failed after all expansion attempts: {inner_e}"
+                            )
+
+                if not erc_regen_ok:
+                    # Routing failed even with expansion — handle per fallback policy.
+                    _handle_fallback(
+                        circuit, tool_modules[KICAD8], filepath, top_name,
+                        title, flatness, options, active_logger,
+                        reason=f"ERC correction regeneration failed after expansion attempts",
                     )
-                    node.place(expansion_factor=1.0, **options)
-                    node.route(**options)
-                    output_file = write_top_schematic(
-                        circuit, node, filepath, top_name, title, version=20230409
-                    )
-                    finalize_parts_and_nets(circuit, **options)
-                except (RoutingFailure, PlacementFailure) as inner_e:
-                    finalize_parts_and_nets(circuit, **options)
-                    active_logger.warning(
-                        f"ERC correction regeneration failed: {inner_e}. "
-                        "Falling back to labels-only output."
-                    )
-                    _stub_all_non_explicit(circuit)
-                    preprocess_circuit(circuit, **options)
-                    node = SchNode(
-                        circuit,
-                        tool_modules[KICAD8],
-                        filepath,
-                        top_name,
-                        title,
-                        flatness,
-                    )
-                    node.place(expansion_factor=1.0, **options)
-                    node.route(**options)
-                    output_file = write_top_schematic(
-                        circuit, node, filepath, top_name, title, version=20230409
-                    )
-                    finalize_parts_and_nets(circuit, **options)
                     break
 
         return
 
-    # All retries exhausted. If auto_stub is enabled, fall back to labels-only.
+    # All retries exhausted.
     if failure_type and options.get("auto_stub", False):
-        active_logger.warning(
-            "Routing failed after all retries. Falling back to labels-only output."
+        _handle_fallback(
+            circuit, tool_modules[KICAD8], filepath, top_name,
+            title, flatness, options, active_logger,
+            reason=f"Routing failed after all {retries} retries",
         )
-        _stub_all_non_explicit(circuit)
-
-        preprocess_circuit(circuit, **options)
-        node = SchNode(
-            circuit, tool_modules[KICAD8], filepath, top_name, title, flatness
-        )
-        node.place(expansion_factor=1.0, **options)
-        node.route(**options)
-        output_file = write_top_schematic(
-            circuit, node, filepath, top_name, title, version=20230409
-        )
-        active_logger.info(f"Labels-only schematic written to {output_file}")
-        finalize_parts_and_nets(circuit, **options)
         return
 
     finalize_parts_and_nets(circuit, **options)
