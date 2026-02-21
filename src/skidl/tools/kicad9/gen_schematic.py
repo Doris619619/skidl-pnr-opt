@@ -494,25 +494,65 @@ def gen_schematic(
     retries=2,
     **options,
 ):
-    """Create a KiCad 8 schematic file from a Circuit object.
+    """Create a KiCad 9 schematic file from a Circuit object.
 
     Args:
         circuit (Circuit): The Circuit object that will have a schematic generated for it.
         filepath (str, optional): The directory where the schematic files are placed. Defaults to ".".
         top_name (str, optional): The name for the top of the circuit hierarchy. Defaults to get_script_name().
         title (str, optional): The title of the schematic. Defaults to "SKiDL-Generated Schematic".
-        flatness (float, optional): Determines how much the hierarchy is flattened in the schematic. Defaults to 0.0 (completely hierarchical).
+        flatness (float, optional): Determines how much the hierarchy is flattened in the schematic.
+            Defaults to 0.0 (completely hierarchical). Use 1.0 to flatten everything into one sheet.
         retries (int, optional): Number of times to re-try if routing fails. Defaults to 2.
         options (dict, optional): Dict of options and values, usually for drawing/debugging.
 
-    Additional options:
-        auto_stub (bool): Enable heuristic auto-stubbing and ERC correction loop. Default False.
-        auto_stub_fanout (int): Fanout threshold for auto-stubbing. Default 5.
-        erc_max_iterations (int): Max ERC correction passes. Default 3.
+    Auto-stub options (pass as keyword arguments):
+        auto_stub (bool): Enable auto-stubbing for large/complex circuits. Converts nets that
+            would fail routing into global labels, and runs a KiCad ERC correction loop to
+            iteratively fix remaining issues. Power nets (GND, VCC, etc.) are automatically
+            emitted as proper KiCad power symbols. Default False.
+        auto_stub_fanout (int): Nets with more pins than this are stubbed pre-routing. Default 3.
+        auto_stub_max_wire_pins (int): Max pins on a net before selective routing stubs it
+            post-placement. Default 3.
+        auto_stub_max_wire_dist (int): Max manhattan distance (mils) between pins before
+            selective routing stubs the net. Default 2000.
+        erc_max_iterations (int): Max ERC correction loop passes. Default 8.
         auto_stub_fallback (str): What to do when routing fails with auto_stub enabled.
             "labels" (default) — fall back to labels-only schematic.
             "raise" — raise the RoutingFailure so the caller sees it.
             "warn" — produce labels-only but also raise a warning exception.
+
+    Tips for best results with auto_stub:
+        - Use @subcircuit to group related parts (e.g. power supply, MCU, amplifier).
+          Each subcircuit gets placed and routed independently, producing more wired
+          connections and cleaner hierarchical sheets.
+        - Keep subcircuits to 5-15 parts for best wire routing results.
+        - Power nets are automatically detected and emitted as KiCad power symbols
+          (e.g. power:GND, power:VCC) which display correctly in the schematic editor.
+
+    Example::
+
+        from skidl import *
+
+        @subcircuit
+        def power_supply(vin, vout, gnd):
+            ldo = Part("Regulator_Linear", "AP2112K-3.3")
+            ldo["VIN"] += vin
+            ldo["VOUT"] += vout
+            ldo["GND"] += gnd
+            ldo["EN"] += vin
+            for val in ["1uF", "1uF"]:
+                c = Part("Device", "C", value=val)
+                c[1] += vout if val == "1uF" else vin
+                c[2] += gnd
+
+        vcc = Net("VCC"); vcc.drive = POWER
+        gnd = Net("GND"); gnd.drive = POWER
+        vin = Net("VIN")
+
+        power_supply(vin, vcc, gnd)
+
+        generate_schematic(auto_stub=True)
     """
 
     from skidl import KICAD8

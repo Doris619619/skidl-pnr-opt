@@ -1,89 +1,94 @@
-# SKiDL — Lachlan's Fork
+# SKiDL — Auto-Stub Schematic Generation
 
-## What This Fork Does
+## Overview
 
-This is a fork of [devbisme/skidl](https://github.com/devbisme/skidl) with KiCad 9 schematic generation fixes and the auto-stub + ERC correction loop feature. Branch: `fix/scaling-and-tests`.
+This branch adds `auto_stub` mode to `generate_schematic()` for reliable KiCad 9 schematic output, even for large/complex circuits. It also fixes several KiCad 9 S-expression format issues.
 
-## Key Changes from Upstream
+See `tests/examples/schematics/esp32_audio_board.py` for a full working example.
 
-### PR #284: KiCad 9 ERC Fixes
-- Pin UUID generation for connectivity
-- Wire splitting at junctions
-- Quote escaping in S-expressions
-- mm/mils boundary conversion
+## Auto-Stub Feature
 
-### Auto-Stub + ERC Correction Loop (this branch)
-Opt-in via `generate_schematic(auto_stub=True)`. Three-phase approach:
+Opt-in via `generate_schematic(auto_stub=True)`. Handles circuits that would otherwise fail routing:
 
-1. **Pre-generation heuristics** (`auto_stub_nets()` in `gen_schematic.py`):
-   - Power nets (GND, VCC, +3V3, etc.) → global labels
-   - High-fanout nets (>= threshold) → global labels
-   - User-explicit `net.stub = True/False` always respected
+1. **Pre-generation heuristics** — power nets and high-fanout nets become global labels
+2. **Selective routing** — post-placement, nets that are too complex or too spread out get stubbed
+3. **Row-based placer** — O(n) BFS placement for groups >20 parts
+4. **Power symbol injection** — GND, VCC, +3V3, etc. emit proper KiCad `power:` symbols
+5. **ERC correction loop** — runs `kicad-cli sch erc`, stubs failing nets, regenerates
 
-2. **Cross-group stubbing** (`_auto_stub_cross_group()` in `place.py`):
-   - Nets spanning multiple placement groups → global labels
-   - Runs after `group_parts()`, then re-groups
-
-3. **ERC correction loop** (in `gen_schematic.py`):
-   - After generation: `kicad-cli sch erc` → parse errors → stub problem nets → full regenerate
-   - Up to `erc_max_iterations` passes (default 3)
-   - Each regeneration tries expansion (1.0x → 1.5x → 2.25x) before fallback
-
-### Bug Fixes
-- **NetTerminal cross-circuit**: `NetTerminal.__init__` now passes `circuit=net.circuit` to `Part.__init__` so it works with explicit `Circuit()` objects
-- **ERC loop routing failure**: Inner regeneration handles `RoutingFailure` gracefully
-
-## Options
+### Options
 
 ```python
 generate_schematic(
-    auto_stub=True,              # Enable all auto-stub features
-    auto_stub_fanout=5,          # High-fanout threshold (default 5)
-    erc_max_iterations=3,        # Max ERC correction passes (default 3)
-    auto_stub_fallback="labels", # "labels" | "raise" | "warn"
+    auto_stub=True,                    # Enable auto-stubbing
+    auto_stub_fanout=3,                # Stub nets with more pins than this
+    auto_stub_max_wire_pins=3,         # Max pins for wire routing (post-placement)
+    auto_stub_max_wire_dist=2000,      # Max manhattan distance for wires (mils)
+    erc_max_iterations=8,              # Max ERC correction passes
+    auto_stub_fallback="labels",       # "labels" | "raise" | "warn"
 )
 ```
 
-### Fallback Policy (`auto_stub_fallback`)
-- `"labels"` (default) — produces labels-only schematic + WARNING listing converted nets
-- `"raise"` — re-raises RoutingFailure so caller sees it (use for debugging)
-- `"warn"` — labels-only output + Python `LabelsOnlyWarning` exception
+### Best Practice: Use @subcircuit
+
+Group related parts into subcircuits. Each becomes a hierarchical sheet with independently routed connections — produces significantly more wires vs a flat circuit.
+
+```python
+@subcircuit
+def power_supply(vin, vout, gnd):
+    ldo = Part("Regulator_Linear", "AP2112K-3.3")
+    ldo[1] += vin; ldo[2] += gnd; ldo[3] += vin; ldo[5] += vout
+    # ... decoupling caps ...
+
+@subcircuit
+def audio_amp(vbat, vcc, gnd, bclk, lrclk, din):
+    amp = Part("Audio", "MAX98357A")
+    # ... amp circuit ...
+
+# Top level: define nets, instantiate subcircuits
+vcc = Net("VCC"); vcc.drive = POWER
+gnd = Net("GND"); gnd.drive = POWER
+
+power_supply(vbat, vcc, gnd)
+audio_amp(vbat, vcc, gnd, bclk, lrclk, din)
+
+generate_schematic(auto_stub=True)
+```
 
 ## File Map
 
-| File | What Changed |
-|------|-------------|
-| `src/skidl/net.py` | `_stub_explicit` tracking in `__init__` and `stub.setter` |
-| `src/skidl/tools/kicad9/gen_schematic.py` | `auto_stub_nets()`, ERC loop, `_handle_fallback()`, `_parse_erc_report()` |
-| `src/skidl/schematics/place.py` | `_auto_stub_cross_group()` after `group_parts()` |
-| `src/skidl/schematics/net_terminal.py` | Pass `circuit=net.circuit` to `Part.__init__` |
-| `tests/unit_tests/ai_tests/test_auto_stub.py` | 48 tests across 3 layers |
+| File | Purpose |
+|------|---------|
+| `src/skidl/tools/kicad9/gen_schematic.py` | Auto-stub orchestration, selective routing, ERC loop |
+| `src/skidl/tools/kicad9/sexp_schematic.py` | S-expression writer, power symbols, hierarchical labels |
+| `src/skidl/schematics/place.py` | Row-based placer, grid block fallback |
+| `src/skidl/schematics/sch_node.py` | Boundary net detection for hierarchy |
+| `src/skidl/tools/inject_labels.py` | Label injection infrastructure |
+| `tests/unit_tests/ai_tests/test_auto_stub.py` | 66 tests covering all features |
+| `tests/examples/schematics/esp32_audio_board.py` | Full working example |
 
 ## Testing
 
 ```bash
-# All auto-stub tests (unit + integration + KiCad CLI)
-KICAD9_SYMBOL_DIR=/usr/share/kicad/symbols .venv/bin/python -m pytest tests/unit_tests/ai_tests/test_auto_stub.py -v
+# Set your KiCad symbol library path
+export KICAD9_SYMBOL_DIR=/usr/share/kicad/symbols
 
-# Full AI test suite (regression check)
-KICAD9_SYMBOL_DIR=/usr/share/kicad/symbols .venv/bin/python -m pytest tests/unit_tests/ai_tests/ -v
+# Auto-stub tests
+python -m pytest tests/unit_tests/ai_tests/test_auto_stub.py -v
+
+# Full test suite
+python -m pytest tests/unit_tests/ai_tests/ -v
+
+# Run the example
+python tests/examples/schematics/esp32_audio_board.py
 ```
 
-Pre-existing failures (not ours): `test_generate_svg` (missing netlistsvg), `test_generate_pcb` (missing FootprintLoad).
-
-## Venv
-
-- SKiDL dev venv: `/home/lachlan/Projects/skidl/.venv/` (Python 3.12, editable install)
-- Concentric PCB venv: `/home/lachlan/Projects/concentric/.venv-pcb/` (created on macOS, broken on wintermute)
-- KiCad 9 symbols: `/usr/share/kicad/symbols` (set via `KICAD9_SYMBOL_DIR`)
-
-## SKiDL Internals Cheat Sheet
+## Internals Cheat Sheet
 
 - `net.valid` is a property (not `is_valid()`)
-- `net._stub` is the backing field; `net.stub` is the property with setter that propagates to pins
-- `Part.__init__` uses `circuit = circuit or default_circuit` — always pass circuit explicitly for non-default circuits
-- `NetTerminal` is a specialized Part with one pin, used for net labels in schematics
-- `SchNode.get_internal_nets()` skips stubbed pins (line 217)
-- `Placer.group_parts()` groups parts by non-stub net connectivity
-- Routing engine: tries switchbox routing, raises `RoutingFailure` on failure
-- `finalize_parts_and_nets()` removes NetTerminals and cleans up placement attrs — must call after every place/route attempt
+- `net._stub` is the backing field; `net.stub` propagates to pins
+- `Part.__init__` defaults to `default_circuit` — pass `circuit=` explicitly for named circuits
+- `NetTerminal` is a specialized Part with one pin, used for net labels
+- `finalize_parts_and_nets()` must be called after every place/route attempt
+- Row-based placer activates for groups >20 parts (`_ROW_PLACE_THRESHOLD`)
+- Power symbols detected from `/usr/share/kicad/symbols/power.kicad_sym` (or `KICAD9_SYMBOL_DIR`)
