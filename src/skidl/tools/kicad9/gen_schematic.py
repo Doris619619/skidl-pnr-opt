@@ -422,21 +422,45 @@ def gen_schematic(
                 )
 
                 # Full regeneration through the pipeline.
-                preprocess_circuit(circuit, **options)
-                node = SchNode(
-                    circuit,
-                    tool_modules[KICAD8],
-                    filepath,
-                    top_name,
-                    title,
-                    flatness,
-                )
-                node.place(expansion_factor=1.0, **options)
-                node.route(**options)
-                output_file = write_top_schematic(
-                    circuit, node, filepath, top_name, title, version=20230409
-                )
-                finalize_parts_and_nets(circuit, **options)
+                try:
+                    preprocess_circuit(circuit, **options)
+                    node = SchNode(
+                        circuit,
+                        tool_modules[KICAD8],
+                        filepath,
+                        top_name,
+                        title,
+                        flatness,
+                    )
+                    node.place(expansion_factor=1.0, **options)
+                    node.route(**options)
+                    output_file = write_top_schematic(
+                        circuit, node, filepath, top_name, title, version=20230409
+                    )
+                    finalize_parts_and_nets(circuit, **options)
+                except (RoutingFailure, PlacementFailure) as inner_e:
+                    finalize_parts_and_nets(circuit, **options)
+                    active_logger.warning(
+                        f"ERC correction regeneration failed: {inner_e}. "
+                        "Falling back to labels-only output."
+                    )
+                    _stub_all_non_explicit(circuit)
+                    preprocess_circuit(circuit, **options)
+                    node = SchNode(
+                        circuit,
+                        tool_modules[KICAD8],
+                        filepath,
+                        top_name,
+                        title,
+                        flatness,
+                    )
+                    node.place(expansion_factor=1.0, **options)
+                    node.route(**options)
+                    output_file = write_top_schematic(
+                        circuit, node, filepath, top_name, title, version=20230409
+                    )
+                    finalize_parts_and_nets(circuit, **options)
+                    break
 
         return
 
