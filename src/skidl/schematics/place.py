@@ -1447,6 +1447,46 @@ class Placer:
         )
         rmv_attr(node.get_internal_nets(), ("parts",))
 
+    def _auto_stub_cross_group(node, groups, **options):
+        """Stub nets that span multiple placement groups.
+
+        When auto_stub is enabled, nets connecting parts in different groups
+        would require inter-group wiring. Converting them to labels avoids
+        routing complexity.
+
+        Args:
+            node: The SchNode being placed.
+            groups: List of sets of parts from group_parts().
+            options: Dict of options; requires auto_stub=True to take effect.
+        """
+        if not options.get("auto_stub", False):
+            return
+
+        part_to_group = {}
+        for i, group in enumerate(groups):
+            for part in group:
+                part_to_group[id(part)] = i
+
+        for part in node.parts:
+            for pin in part:
+                if not pin.is_connected():
+                    continue
+                net = pin.net
+                if getattr(net, "_stub_explicit", False) or getattr(
+                    net, "stub", False
+                ):
+                    continue
+                pin_groups = {
+                    part_to_group[id(p.part)]
+                    for p in net.pins
+                    if id(p.part) in part_to_group
+                }
+                if len(pin_groups) > 1:
+                    net._stub = True
+                    net._stub_explicit = False
+                    for p in net.get_pins():
+                        p.stub = True
+
     def place(node, tool=None, **options):
         """Place the parts and children in this node.
 
@@ -1478,6 +1518,14 @@ class Placer:
             # Group parts into those that are connected by explicit nets and
             # those that float freely connected only by stub nets.
             connected_parts, internal_nets, floating_parts = node.group_parts(**options)
+
+            # Auto-stub nets spanning multiple placement groups.
+            node._auto_stub_cross_group(connected_parts, **options)
+            if options.get("auto_stub", False):
+                # Re-group after cross-group stubbing may have changed connectivity.
+                connected_parts, internal_nets, floating_parts = node.group_parts(
+                    **options
+                )
 
             # Place each group of connected parts.
             for group in connected_parts:

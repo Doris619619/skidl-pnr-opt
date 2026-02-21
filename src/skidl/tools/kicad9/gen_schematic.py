@@ -10,6 +10,9 @@ Uses SKiDL's placement and routing infrastructure.
 """
 
 import os
+import re
+import shutil
+import subprocess
 from collections import Counter
 
 from skidl.geometry import BBox, Point, Tx, Vector
@@ -21,6 +24,165 @@ from skidl.utilities import export_to_all, rmv_attr
 from .bboxes import calc_hier_label_bbox, calc_symbol_bbox
 
 __all__ = []
+
+# Pattern matching common power net names.
+_POWER_NET_RE = re.compile(
+    r"^(\+\d[\d.]*V[\d]*|GND|AGND|DGND|PGND|VCC|VDD|VSS|VEE|VBUS|VBAT|AVCC|AVDD|DVCC|DVDD)$",
+    re.IGNORECASE,
+)
+
+# ERC error types that can be fixed by stubbing nets.
+FIXABLE_ERROR_TYPES = frozenset(
+    {"pin_not_connected", "pin_not_driven", "wire_not_connected"}
+)
+
+
+def auto_stub_nets(circuit, **options):
+    """Auto-stub power nets and high-fanout nets before generation.
+
+    Only modifies nets that haven't been explicitly set by the user.
+    Called when auto_stub=True is passed to gen_schematic().
+
+    Args:
+        circuit: The Circuit object containing nets to analyze.
+        options: Dict of options. Recognizes 'auto_stub_fanout' (default 5).
+    """
+    fanout_threshold = options.get("auto_stub_fanout", 5)
+
+    for net in circuit.nets:
+        if getattr(net, "_stub_explicit", False):
+            continue
+        if not net.valid or len(net.pins) == 0:
+            continue
+
+        # Power nets: anything starting with "+" or matching common power names.
+        if net.name.startswith("+") or _POWER_NET_RE.match(net.name):
+            net._stub = True
+            net._stub_explicit = False
+            for pin in net.get_pins():
+                pin.stub = True
+            continue
+
+        # High fanout nets: many pins connected to the same net.
+        if len(net.pins) >= fanout_threshold:
+            net._stub = True
+            net._stub_explicit = False
+            for pin in net.get_pins():
+                pin.stub = True
+
+
+def _run_erc(schematic_path):
+    """Run kicad-cli ERC on a schematic file and return the report path.
+
+    Args:
+        schematic_path: Path to the .kicad_sch file.
+
+    Returns:
+        str: Path to the ERC report file, or None if kicad-cli is unavailable.
+    """
+    report_path = schematic_path.replace(".kicad_sch", "-erc.rpt")
+    try:
+        subprocess.run(
+            [
+                "kicad-cli",
+                "sch",
+                "erc",
+                "--output",
+                report_path,
+                "--severity-all",
+                schematic_path,
+            ],
+            capture_output=True,
+            timeout=60,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    return report_path if os.path.exists(report_path) else None
+
+
+def _parse_erc_report(report_path):
+    """Parse kicad-cli ERC report and return list of (error_type, symbol_ref, pin_num).
+
+    The ERC report format has lines like:
+        [pin_not_connected]: Pin not connected ...
+        @(x,y): Symbol U1 Pin 3 ...
+
+    Args:
+        report_path: Path to the ERC .rpt file.
+
+    Returns:
+        list: List of (error_type, symbol_ref, pin_num) tuples.
+    """
+    if not report_path or not os.path.exists(report_path):
+        return []
+
+    errors = []
+    current_error_type = None
+
+    # Patterns for ERC report parsing.
+    error_type_re = re.compile(r"^\[(\w+)\]")
+    symbol_pin_re = re.compile(r"Symbol\s+(\S+)\s+Pin\s+(\S+)")
+
+    with open(report_path, "r") as f:
+        for line in f:
+            line = line.strip()
+
+            # Match error type header.
+            m = error_type_re.match(line)
+            if m:
+                current_error_type = m.group(1)
+                continue
+
+            # Match symbol/pin reference in the detail line.
+            if current_error_type:
+                m = symbol_pin_re.search(line)
+                if m:
+                    errors.append((current_error_type, m.group(1), m.group(2)))
+                    current_error_type = None
+
+    return errors
+
+
+def _stub_nets_for_erc_errors(circuit, errors):
+    """Convert nets involved in ERC errors to stubs for regeneration.
+
+    Args:
+        circuit: The Circuit object.
+        errors: List of (error_type, symbol_ref, pin_num) from _parse_erc_report.
+
+    Returns:
+        bool: True if any nets were newly stubbed.
+    """
+    stubbed_any = False
+    for error_type, symbol_ref, pin_num in errors:
+        if error_type not in FIXABLE_ERROR_TYPES:
+            continue
+        for part in circuit.parts:
+            if part.ref == symbol_ref:
+                for pin in part.pins:
+                    if str(pin.num) == str(pin_num):
+                        net = pin.net
+                        if net and not getattr(net, "_stub_explicit", False):
+                            net._stub = True
+                            net._stub_explicit = False
+                            for p in net.get_pins():
+                                p.stub = True
+                            stubbed_any = True
+                break
+    return stubbed_any
+
+
+def _stub_all_non_explicit(circuit):
+    """Stub all nets that weren't explicitly set by the user (labels-only fallback).
+
+    Args:
+        circuit: The Circuit object.
+    """
+    for net in circuit.nets:
+        if not getattr(net, "_stub_explicit", False):
+            net._stub = True
+            for pin in net.get_pins():
+                pin.stub = True
 
 
 def preprocess_circuit(circuit, **options):
@@ -170,6 +332,11 @@ def gen_schematic(
         flatness (float, optional): Determines how much the hierarchy is flattened in the schematic. Defaults to 0.0 (completely hierarchical).
         retries (int, optional): Number of times to re-try if routing fails. Defaults to 2.
         options (dict, optional): Dict of options and values, usually for drawing/debugging.
+
+    Additional options:
+        auto_stub (bool): Enable heuristic auto-stubbing and ERC correction loop. Default False.
+        auto_stub_fanout (int): Fanout threshold for auto-stubbing. Default 5.
+        erc_max_iterations (int): Max ERC correction passes. Default 3.
     """
 
     from skidl import KICAD8
@@ -184,6 +351,10 @@ def gen_schematic(
     options["rotate_parts"] = True
     options["pt_to_pt_mult"] = 5
     options["pin_normalize"] = True
+
+    # Phase 1: Heuristic auto-stubbing before first generation pass.
+    if options.get("auto_stub", False):
+        auto_stub_nets(circuit, **options)
 
     expansion_factor = 1.0
     failure_type = None
@@ -224,6 +395,68 @@ def gen_schematic(
 
         active_logger.info(f"Schematic written to {output_file}")
 
+        finalize_parts_and_nets(circuit, **options)
+
+        # Phase 2: ERC correction loop (only when auto_stub is enabled).
+        if options.get("auto_stub", False) and shutil.which("kicad-cli"):
+            max_erc_iterations = options.get("erc_max_iterations", 3)
+            for erc_attempt in range(max_erc_iterations):
+                erc_report = _run_erc(output_file)
+                errors = _parse_erc_report(erc_report)
+                fixable = [e for e in errors if e[0] in FIXABLE_ERROR_TYPES]
+
+                if not fixable:
+                    active_logger.info(
+                        f"ERC clean after {erc_attempt + 1} iteration(s)"
+                    )
+                    break
+
+                if not _stub_nets_for_erc_errors(circuit, fixable):
+                    active_logger.info(
+                        f"ERC: {len(fixable)} unfixable errors remain after {erc_attempt + 1} iteration(s)"
+                    )
+                    break
+
+                active_logger.info(
+                    f"ERC correction: stubbed nets for {len(fixable)} errors, regenerating (iteration {erc_attempt + 1})"
+                )
+
+                # Full regeneration through the pipeline.
+                preprocess_circuit(circuit, **options)
+                node = SchNode(
+                    circuit,
+                    tool_modules[KICAD8],
+                    filepath,
+                    top_name,
+                    title,
+                    flatness,
+                )
+                node.place(expansion_factor=1.0, **options)
+                node.route(**options)
+                output_file = write_top_schematic(
+                    circuit, node, filepath, top_name, title, version=20230409
+                )
+                finalize_parts_and_nets(circuit, **options)
+
+        return
+
+    # All retries exhausted. If auto_stub is enabled, fall back to labels-only.
+    if failure_type and options.get("auto_stub", False):
+        active_logger.warning(
+            "Routing failed after all retries. Falling back to labels-only output."
+        )
+        _stub_all_non_explicit(circuit)
+
+        preprocess_circuit(circuit, **options)
+        node = SchNode(
+            circuit, tool_modules[KICAD8], filepath, top_name, title, flatness
+        )
+        node.place(expansion_factor=1.0, **options)
+        node.route(**options)
+        output_file = write_top_schematic(
+            circuit, node, filepath, top_name, title, version=20230409
+        )
+        active_logger.info(f"Labels-only schematic written to {output_file}")
         finalize_parts_and_nets(circuit, **options)
         return
 

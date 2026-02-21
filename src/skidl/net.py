@@ -281,7 +281,8 @@ class Net(SkidlBaseObject):
         self.circuit = None
         self._netclasses = NetClasses()  # Net classes directly assigned to this net.
         self.code = None  # This is the net number used in a KiCad netlist file.
-        self.stub = False  # Net is not a stub for schematic generation.
+        self._stub = False  # Net is not a stub for schematic generation.
+        self._stub_explicit = False  # True if user explicitly set stub.
 
         # Set the net name directly to the passed-in name without any adjustment.
         # The net name will be adjusted when it is added to the circuit which
@@ -1535,11 +1536,12 @@ class Net(SkidlBaseObject):
     def stub(self, val):
         """
         Set the stub status for this net.
-        
+
         Args:
             val (bool): True to make this a stub net, False otherwise.
         """
         self._stub = val
+        self._stub_explicit = True
         for pin in self.get_pins():
             pin.stub = val
 
