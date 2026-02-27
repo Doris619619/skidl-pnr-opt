@@ -48,15 +48,19 @@ _pwr_counter = [0]
 
 def _get_power_lib_text():
     """Load the raw text of the power symbol library. Cached."""
+    from skidl import get_default_tool
+
+    kicad_version = get_default_tool()[len("kicad"):]
+
     global _power_lib_text_cache
     if _power_lib_text_cache is not None:
         return _power_lib_text_cache
 
     for path in [
-        os.environ.get("KICAD9_SYMBOL_DIR", ""),
+        os.environ.get(f"KICAD{kicad_version}_SYMBOL_DIR", ""),
         "/usr/share/kicad/symbols",
         "/usr/local/share/kicad/symbols",
-        os.path.expanduser("~/.local/share/kicad/9.0/symbols"),
+        os.path.expanduser(f"~/.local/share/kicad/{kicad_version}.0/symbols"),
     ]:
         lib_path = os.path.join(path, "power.kicad_sym") if path else ""
         if lib_path and os.path.exists(lib_path):

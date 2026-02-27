@@ -18,28 +18,32 @@ from collections import Counter
 from skidl.geometry import BBox, Point, Tx, Vector
 from skidl.schematics.net_terminal import NetTerminal
 from skidl.scriptinfo import get_script_name
-from skidl.tools.kicad9.sexp_schematic import write_top_schematic
 from skidl.utilities import export_to_all, rmv_attr
 
+from .sexp_schematic import write_top_schematic
 from .bboxes import calc_hier_label_bbox, calc_symbol_bbox
+
 
 __all__ = []
 
 
 def _setup_kicad_env():
-    """Set KICAD9_FOOTPRINT_DIR if not already set.
+    """Set KiCad footprint directory if not already set.
 
     Auto-detects the standard KiCad footprint directory so that
     generated schematics can reference footprints for PCB layout.
     """
-    if not os.environ.get("KICAD9_FOOTPRINT_DIR"):
+    from skidl import get_default_tool
+
+    kicad_version = get_default_tool()[len("kicad"):]
+    if not os.environ.get(f"KICAD{kicad_version}_FOOTPRINT_DIR"):
         for path in [
             "/usr/share/kicad/footprints",
             "/usr/local/share/kicad/footprints",
-            os.path.expanduser("~/.local/share/kicad/9.0/footprints"),
+            os.path.expanduser(f"~/.local/share/kicad/{kicad_version}.0/footprints"),
         ]:
             if os.path.isdir(path):
-                os.environ["KICAD9_FOOTPRINT_DIR"] = path
+                os.environ[f"KICAD{kicad_version}_FOOTPRINT_DIR"] = path
                 break
 
 
@@ -555,12 +559,14 @@ def gen_schematic(
         generate_schematic(auto_stub=True)
     """
 
-    from skidl import KICAD8
+    from skidl import get_default_tool
     from skidl.logger import active_logger
     from skidl.schematics.place import PlacementFailure
     from skidl.schematics.route import RoutingFailure
     from skidl.schematics.sch_node import SchNode
     from skidl.tools import tool_modules
+
+    tool_module = tool_modules[get_default_tool()]
 
     _setup_kicad_env()
 
@@ -581,7 +587,7 @@ def gen_schematic(
         preprocess_circuit(circuit, **options)
 
         node = SchNode(
-            circuit, tool_modules[KICAD8], filepath, top_name, title, flatness
+            circuit, tool_module, filepath, top_name, title, flatness
         )
 
         try:
@@ -648,7 +654,7 @@ def gen_schematic(
                         preprocess_circuit(circuit, **options)
                         node = SchNode(
                             circuit,
-                            tool_modules[KICAD8],
+                            tool_module,
                             filepath,
                             top_name,
                             title,
@@ -679,7 +685,7 @@ def gen_schematic(
                 if not erc_regen_ok:
                     # Routing failed even with expansion — handle per fallback policy.
                     _handle_fallback(
-                        circuit, tool_modules[KICAD8], filepath, top_name,
+                        circuit, tool_module, filepath, top_name,
                         title, flatness, options, active_logger,
                         reason=f"ERC correction regeneration failed after expansion attempts",
                     )
@@ -690,7 +696,7 @@ def gen_schematic(
     # All retries exhausted.
     if failure_type and options.get("auto_stub", False):
         _handle_fallback(
-            circuit, tool_modules[KICAD8], filepath, top_name,
+            circuit, tool_module, filepath, top_name,
             title, flatness, options, active_logger,
             reason=f"Routing failed after all {retries} retries",
         )
