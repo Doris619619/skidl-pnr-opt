@@ -28,7 +28,7 @@ with open("HISTORY.md") as history_file:
 
 requirements = [
     "kinet2pcb >= 1.1.4",
-    "simp_sexp >= 0.3.0",
+    "simp_sexp >= 0.3.1",
     "inspice; python_version>='3.11'",
     "ply",
     "rich",
