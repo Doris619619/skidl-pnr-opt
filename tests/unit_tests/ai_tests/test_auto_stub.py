@@ -26,6 +26,11 @@ from skidl.tools.kicad9.gen_schematic import (
 )
 
 
+# Skip entire module unless default tool is KICAD9.
+if os.getenv("SKIDL_TOOL") not in ('KICAD9',):
+    pytest.skip("Tests require KICAD9 as default tool", allow_module_level=True)
+
+
 # ===========================================================================
 # Layer 1: Unit tests — pure functions, no KiCad needed
 # ===========================================================================

@@ -29,6 +29,12 @@ from skidl.tools.kicad9.sexp_schematic import (
     create_title_block_sexp,
 )
 
+
+# Skip entire module unless default tool is KICAD9.
+if os.getenv("SKIDL_TOOL") not in ('KICAD9',):
+    pytest.skip("Tests require KICAD9 as default tool", allow_module_level=True)
+
+
 # ===========================================================================
 # Layer 1: Unit tests — pure functions, no KiCad needed
 # ===========================================================================
@@ -317,6 +323,12 @@ def _generate_simple_divider(output_dir):
         r1[2] += mid
         mid += r2[1]
         r2[2] += gnd
+
+        # Power flags to prevent ERC errors about unpowered nets.
+        pwrflag1 = Part("power", "PWR_FLAG")
+        pwrflag2 = Part("power", "PWR_FLAG")
+        vcc += pwrflag1
+        gnd += pwrflag2
 
         circuit.generate_schematic(filepath=output_dir, top_name="divider_test")
 
