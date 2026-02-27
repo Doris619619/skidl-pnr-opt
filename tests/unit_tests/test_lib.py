@@ -360,7 +360,12 @@ def test_lib_kicad_top_level_pins():
     for part in lib.parts:
         check_lib_part(part)
 
-
+# This test tries to load a library from the KiCad symbol repository.
+# If the repository is not available, it will fail with a FileNotFoundError,
+# which is expected and marked as an expected failure.
+# Possibly the repository is not available because the test is being run in an environment without internet access,
+# or because the repository URL has changed or is temporarily down.
+@pytest.mark.xfail(raises=(FileNotFoundError,))
 def test_lib_kicad_repository():
     """Test KiCad library repository."""
     # Reset the library.

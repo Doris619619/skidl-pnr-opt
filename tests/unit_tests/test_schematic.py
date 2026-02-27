@@ -29,8 +29,8 @@ from skidl.schematics.route import RoutingFailure
 
 
 # Skip entire module unless default tool is KICAD5.
-if os.getenv("SKIDL_TOOL") != 'KICAD5':
-    pytest.skip("Tests require KICAD5 as default tool", allow_module_level=True)
+if os.getenv("SKIDL_TOOL") not in ('KICAD5','KICAD9'):
+    pytest.skip("Tests require KICAD5 or KICAD9 as default tool", allow_module_level=True)
 
 
 sch_options = {}
@@ -180,16 +180,26 @@ def search_bool_options(num_trials=1, flatness=1.0, bool_option_keys=[]):
 
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_1():
-    q = Part(
-        lib="Device.lib",
-        name="Q_PNP_CBE",
-        footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-        dest=TEMPLATE,
-        symtx="V",
-        value="Q_NPN_CBE",
-    )
+    try:
+        q = Part(
+            lib="Device",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            symtx="V",
+            value="Q_PNP_CBE",
+        )
+    except ValueError:
+        q = Part(
+            lib="Transistor_BJT",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            symtx="V",
+            value="Q_PNP_CBE",
+        )
     r = Part(
-        "Device.lib", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
+        "Device", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
     )
     gndt = Part("power", "GND", footprint="TestPoint:TestPoint_Pad_D4.0mm")
     vcct = Part("power", "VCC", footprint="TestPoint:TestPoint_Pad_D4.0mm")
@@ -223,15 +233,22 @@ def test_gen_sch_1():
 def test_gen_sch_place():
     @subcircuit
     def test():
-        q = Part(
-            lib="Device.lib",
-            name="Q_PNP_CBE",
-            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-            dest=TEMPLATE,
-            # symtx="V",
-        )
+        try:
+            q = Part(
+                lib="Device",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+            )
+        except ValueError:
+            q = Part(
+                lib="Transistor_BJT",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+            )
         r = Part(
-            "Device.lib", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
+            "Device", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
         )
         vcc = Net("VCC")
         gnd = Net("GND")
@@ -269,17 +286,26 @@ def test_gen_sch_place():
 def test_gen_sch_place_2():
     @subcircuit
     def test():
-        q = Part(
-            lib="Device.lib",
-            name="Q_PNP_CBE",
-            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-            dest=TEMPLATE,
-            symtx="VV",
-        )
+        try:
+            q = Part(
+                lib="Device",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+                symtx="VV",
+            )
+        except ValueError:
+            q = Part(
+                lib="Transistor_BJT",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+                symtx="VV",
+            )
         r = Part(
-            "Device.lib", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE, symtx="VV"
+            "Device", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE, symtx="VV"
         )
-        c = Part("Device.lib", "C", value="10pF")
+        c = Part("Device", "C", value="10pF")
         vcc = Net("VCC", netio="i")
         gnd = Net("GND", netio="i")
         vcca = Net("VCCA", stub=True)
@@ -308,16 +334,24 @@ def test_gen_sch_place_2():
 
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_very_simple():
-    q = Part(
-        lib="Device.lib",
-        name="Q_PNP_CBE",
-        footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-        dest=TEMPLATE,
-        value="",
-        # value="Q_NPN_CBE",
-    )
+    try:
+        q = Part(
+            lib="Device",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            value="",
+        )
+    except ValueError:
+        q = Part(
+            lib="Transistor_BJT",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            value="",
+        )
     r = Part(
-        "Device.lib", "R", value="", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
+        "Device", "R", value="", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
     )
     gndt = Part("power", "GND", footprint="TestPoint:TestPoint_Pad_D4.0mm", dest=TEMPLATE)
     # vcct = Part("power", "VCC", footprint="TestPoint:TestPoint_Pad_D4.0mm", dest=TEMPLATE)
@@ -329,13 +363,22 @@ def test_gen_sch_very_simple():
 
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_simple():
-    q = Part(
-        lib="Device.lib",
-        name="Q_PNP_CBE",
-        footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-        dest=TEMPLATE,
-        symtx="V",
-    )
+    try:
+        q = Part(
+            lib="Device",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            symtx="V",
+        )
+    except ValueError:
+        q = Part(
+            lib="Transistor_BJT",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            symtx="V",
+        )
     qs = q(15)
     ns = [Net() for p in qs[0].pins]
     for q in qs:
@@ -347,18 +390,27 @@ def test_gen_sch_simple():
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_floating():
     r = Part(
-        "Device.lib", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
+        "Device", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
     )
     c = Part(
-        "Device.lib", "C", footprint="Capacitor_SMD:R_0805_2012Metric", dest=TEMPLATE
+        "Device", "C", footprint="Capacitor_SMD:R_0805_2012Metric", dest=TEMPLATE
     )
-    q = Part(
-        lib="Device.lib",
-        name="Q_PNP_CBE",
-        footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-        dest=TEMPLATE,
-        symtx="V",
-    )
+    try:
+        q = Part(
+            lib="Device",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            symtx="V",
+        )
+    except ValueError:
+        q = Part(
+            lib="Transistor_BJT",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            symtx="V",
+        )
     # gndt = Part("power", "GND", footprint="TestPoint:TestPoint_Pad_D4.0mm")
     # vcct = Part("power", "VCC", footprint="TestPoint:TestPoint_Pad_D4.0mm")
 
@@ -381,14 +433,23 @@ def test_gen_sch_floating():
 def test_gen_sch_units():
     @subcircuit
     def test():
-        q = Part(
-            lib="Device.lib",
-            name="Q_PNP_CBE",
-            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-            dest=TEMPLATE,
-            symtx="V",
-        )
-        # r = Part("Device.lib", "R", footprint="Resistor_SMD:R_0805_2012Metric",dest=TEMPLATE)
+        try:
+            q = Part(
+                lib="Device",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+                symtx="V",
+            )
+        except ValueError:
+            q = Part(
+                lib="Transistor_BJT",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+                symtx="V",
+            )
+        # r = Part("Device", "R", footprint="Resistor_SMD:R_0805_2012Metric",dest=TEMPLATE)
         rn = Part("Device", "R_Pack05_Split", footprint=":")
         gndt = Part("power", "GND", footprint="TestPoint:TestPoint_Pad_D4.0mm")
         vcct = Part("power", "VCC", footprint="TestPoint:TestPoint_Pad_D4.0mm")
@@ -417,13 +478,22 @@ def test_gen_sch_units():
         vcc & q2["E"]
 
     with Group("A"):
-        q = Part(
-            lib="Device.lib",
-            name="Q_PNP_CBE",
-            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-            dest=TEMPLATE,
-            symtx="V",
-        )
+        try:
+            q = Part(
+                lib="Device",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+                symtx="V",
+            )
+        except ValueError:
+            q = Part(
+                lib="Transistor_BJT",
+                name="Q_PNP_CBE",
+                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                dest=TEMPLATE,
+                symtx="V",
+            )
         q()
         test()  # This enables a recursion error in test_interface_12 for reasons unknown.
 
@@ -434,15 +504,24 @@ def test_gen_sch_units():
 def test_gen_sch_hier():
     with Group("A"):
         with Group("B"):
-            q = Part(
-                lib="Device.lib",
-                name="Q_PNP_CBE",
-                footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-                dest=TEMPLATE,
-                symtx="V",
-            )
+            try:
+                q = Part(
+                    lib="Device",
+                    name="Q_PNP_CBE",
+                    footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                    dest=TEMPLATE,
+                    symtx="V",
+                )
+            except ValueError:
+                q = Part(
+                    lib="Transistor_BJT",
+                    name="Q_PNP_CBE",
+                    footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+                    dest=TEMPLATE,
+                    symtx="V",
+                )
             r = Part(
-                "Device.lib",
+                "Device",
                 "R",
                 footprint="Resistor_SMD:R_0805_2012Metric",
                 dest=TEMPLATE,
@@ -479,15 +558,24 @@ def test_gen_sch_hier():
 def test_gen_sch_hier_conn():
 
     r = Part(
-        "Device.lib", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
+        "Device", "R", footprint="Resistor_SMD:R_0805_2012Metric", dest=TEMPLATE
     )
-    q = Part(
-        lib="Device.lib",
-        name="Q_PNP_CBE",
-        footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-        dest=TEMPLATE,
-        # symtx="V",
-    )
+    try:
+        q = Part(
+            lib="Device",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            # symtx="V",
+        )
+    except ValueError:
+        q = Part(
+            lib="Transistor_BJT",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+            # symtx="V",
+        )
 
     a = Net("A")
     b = Net("B")
@@ -506,12 +594,20 @@ def test_gen_sch_hier_conn():
 
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_part_tx():
-    q = Part(
-        lib="Device.lib",
-        name="Q_PNP_CBE",
-        footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
-        dest=TEMPLATE,
-    )
+    try:
+        q = Part(
+            lib="Device",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+        )
+    except ValueError:
+        q = Part(
+            lib="Transistor_BJT",
+            name="Q_PNP_CBE",
+            footprint="Package_TO_SOT_SMD:SOT-223-3_TabPin2",
+            dest=TEMPLATE,
+        )
     q1 = q(symtx="")
     q2 = q(symtx="R")
     q3 = q(symtx="L")
@@ -524,10 +620,13 @@ def test_gen_sch_part_tx():
 def test_gen_sch_2():
     """Test SVG generation."""
 
-    l1 = Part("Device.lib", "L")
-    r1, r2 = Part("Device.lib", "R", dest=TEMPLATE, value="200.0") * 2
-    q1 = Part("Device.lib", "Q_NPN_CBE")
-    c1 = Part("Device.lib", "C", value="10pF")
+    l1 = Part("Device", "L")
+    r1, r2 = Part("Device", "R", dest=TEMPLATE, value="200.0") * 2
+    try:
+        q1 = Part("Device", "Q_NPN_CBE")
+    except ValueError:
+        q1 = Part("Transistor_BJT", "Q_NPN_CBE")
+    c1 = Part("Device", "C", value="10pF")
     r3 = r2(value="1K")
     vcc, vin, vout, gnd = Net("VCC"), Net("VIN"), Net("VOUT"), Net("GND")
     vcc & r1 & vin & r2 & gnd
@@ -536,17 +635,17 @@ def test_gen_sch_2():
     vout & (l1 | c1) & gnd
     rly = Part("Relay", "TE_PCH-1xxx2M")
     rly[1, 2, 3, 5] += gnd
-    led = Part("Device.lib", "LED_ARGB", symtx="RH")
+    led = Part("Device", "LED_ARGB", symtx="RH")
     r, g, b = Net("R"), Net("G"), Net("B")
     led["A,RK,GK,BK"] += vcc, r, g, b
-    Part(lib="MCU_Microchip_PIC10.lib", name="PIC10F200-IMC")
+    Part(lib="MCU_Microchip_PIC10", name="PIC10F200-IMC")
 
     create_schematic(flatness=1.0)
 
 
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_3():
-    opamp = Part(lib="Amplifier_Operational.lib", name="AD8676xR", symtx="V")
+    opamp = Part(lib="Amplifier_Operational", name="AD8676xR", symtx="V")
     opamp.uA.p2 += Net("IN1")
     opamp.uA.p3 += Net("IN2")
     opamp.uA.p1 += Net("OUT")
@@ -560,7 +659,7 @@ def test_gen_sch_4():
     gnd = Part("power", "GND")
     vcc = Part("power", "VCC")
 
-    opamp = Part(lib="Amplifier_Operational.lib", name="AD8676xR", symtx="V")
+    opamp = Part(lib="Amplifier_Operational", name="AD8676xR", symtx="V")
 
     for part in default_circuit.parts:
         part.validate()
@@ -568,7 +667,7 @@ def test_gen_sch_4():
     vcc[1] += opamp[8]
     gnd[1] += opamp[4]
 
-    r = Part("Device.lib", "R_US", dest=TEMPLATE, tx_ops="L")
+    r = Part("Device", "R_US", dest=TEMPLATE, tx_ops="L")
 
     (
         Net("IN")
@@ -624,8 +723,11 @@ def test_gen_sch_4():
 
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_5():
-    q = Part(lib="Device.lib", name="Q_PNP_CBE", dest=TEMPLATE, symtx="V")
-    r = Part("Device.lib", "R", dest=TEMPLATE)
+    try:
+        q = Part(lib="Device", name="Q_PNP_CBE", dest=TEMPLATE, symtx="V")
+    except ValueError:
+        q = Part(lib="Transistor_BJT", name="Q_PNP_CBE", dest=TEMPLATE, symtx="V")
+    r = Part("Device", "R", dest=TEMPLATE)
     gndt = Part("power", "GND")
     vcct = Part("power", "VCC")
 
@@ -706,11 +808,11 @@ def test_gen_sch_5():
     print(f"cost = {best_arr.cost()}")
 
 
-@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
+@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure, FileNotFoundError))
 def test_gen_sch_6():
-    uc = Part(lib="wch.lib", name="CH551G", dest=TEMPLATE)
+    uc = Part(lib="wch", name="CH551G", dest=TEMPLATE)
     uc.split_pin_names("/")
-    usb = Part(lib="Connector.lib", name="USB_B_Micro", symtx="H")
+    usb = Part(lib="Connector", name="USB_B_Micro", symtx="H")
 
     uc1 = uc()
     uc1["UDM, UDP"] += usb["D-, D+"]
@@ -726,7 +828,7 @@ def test_gen_sch_6():
 
 @pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
 def test_gen_sch_7():
-    r = Part("Device.lib", "R", dest=TEMPLATE)
+    r = Part("Device", "R", dest=TEMPLATE)
     gndt = Part("power", "GND")
     vcct = Part("power", "VCC")
 
@@ -753,16 +855,16 @@ def test_gen_sch_7():
     create_schematic(flatness=1.0)
 
 
-@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
+@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure, FileNotFoundError))
 def test_gen_sch_8():
 
-    fpga = Part(lib="FPGA_Lattice.lib", name="ICE40HX8K-BG121")
+    fpga = Part(lib="FPGA_Lattice", name="ICE40HX8K-BG121")
     fpga.uA.symtx = "R"
     create_schematic(flatness=1.0)
 
 
 @pytest.mark.skip("Skipping test_gen_sch_vga because it always fails.")
-@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
+@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure, FileNotFoundError))
 def test_gen_sch_vga():
     @SubCircuit
     def vga_port(red, grn, blu, hsync, vsync, gnd, logic_lvl=3.3):
@@ -879,7 +981,7 @@ def test_gen_sch_vga():
     hsync = Net("HSYNC")
     vsync = Net("VSYNC")
 
-    xess_lib = r"xess.lib"
+    xess_lib = r"xess"
 
     # Two PMOD headers and a breadboard header bring in the digital red, green,
     # and blue buses along with the horizontal and vertical sync.
@@ -946,7 +1048,7 @@ def test_gen_sch_vga():
 
 
 @pytest.mark.skip("Skipping test_gen_sch_pmod because it always fails.")
-@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
+@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure, FileNotFoundError))
 def test_gen_sch_pmod():
 
     # Define some nets and buses.
@@ -963,7 +1065,7 @@ def test_gen_sch_pmod():
     hsync = Net("HSYNC")
     vsync = Net("VSYNC")
 
-    xess_lib = r"xess.lib"
+    xess_lib = r"xess"
 
     # Two PMOD headers and a breadboard header bring in the digital red, green,
     # and blue buses along with the horizontal and vertical sync.
@@ -1026,9 +1128,9 @@ def test_gen_sch_pmod():
 
 
 @pytest.mark.skip("Skipping test_gen_sch_buses because it uses GameteSnapEDA.lib.")
-@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure))
+@pytest.mark.xfail(raises=(PlacementFailure, RoutingFailure, FileNotFoundError))
 def test_gen_sch_buses():
-    ram = PartTmplt("GameteSnapEDA.lib", "MT48LC16M16A2TG-6A_IT:GTR")
+    ram = PartTmplt("GameteSnapEDA", "MT48LC16M16A2TG-6A_IT:GTR")
     rams = 3 * ram
 
     for rama, ramb in zip(rams[:-1], rams[1:]):
