@@ -34,16 +34,19 @@ lib_suffix = [".kicad_sym"]
 @export_to_all
 def default_lib_paths():
     """Return default list of directories to search for part libraries."""
+    from skidl import get_default_tool
+
+    kicad_version = get_default_tool()[len("kicad"):]
 
     # Start search for part libraries in the current directory.
     paths = ["."]
 
     # Add the location of the default KiCad part libraries.
     try:
-        paths.append(os.environ["KICAD7_SYMBOL_DIR"])
+        paths.append(os.environ[f"KICAD{kicad_version}_SYMBOL_DIR"])
     except KeyError:
         active_logger.warning(
-            "KICAD7_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched."
+            f"KICAD{kicad_version}_SYMBOL_DIR environment variable is missing, so the default KiCad symbol libraries won't be searched."
         )
 
     return paths
@@ -52,13 +55,16 @@ def default_lib_paths():
 @export_to_all
 def get_fp_lib_tbl_dir():
     """Get the path where the global fp-lib-table file is found."""
+    from skidl import get_default_tool
+
+    kicad_version = get_default_tool()[len("kicad"):]
 
     paths = (
-        "$HOME/.config/kicad/7.0",
-        "~/.config/kicad/7.0",
-        "%APPDATA%/kicad/7.0",
-        "$HOME/Library/Preferences/kicad/7.0",
-        "~/Library/Preferences/kicad/7.0",
+        f"$HOME/.config/kicad/{kicad_version}.0",
+        "~/.config/kicad/{kicad_version}.0",
+        "%APPDATA%/kicad/{kicad_version}.0",
+        "$HOME/Library/Preferences/kicad/{kicad_version}.0",
+        "~/Library/Preferences/kicad/{kicad_version}.0",
         "$HOME/.config/kicad",
         "~/.config/kicad",
         "%APPDATA%/kicad",
@@ -84,11 +90,12 @@ def load_sch_lib(lib, filename=None, lib_search_paths_=None, lib_section=None):
         lib_section: Only used for SPICE simulations.
     """
 
-    from skidl import Part, KICAD7
+    from skidl import Part, get_default_tool
     from skidl.tools import lib_suffixes
 
     # Try to open the file using allowable suffixes for the versions of KiCAD.
-    suffixes = lib_suffixes[KICAD7]
+    dflt_tool = get_default_tool()
+    suffixes = lib_suffixes[dflt_tool]
     base, suffix = os.path.splitext(filename)
     if suffix:
         # If an explicit file extension was given, use it instead of tool lib default extensions.
@@ -120,7 +127,7 @@ def load_sch_lib(lib, filename=None, lib_search_paths_=None, lib_section=None):
     except:
         active_logger.raise_(
             RuntimeError,
-            f"The file {filename} is not a KiCad Schematic Library File.\n"
+            f"The file {filename} is not a KiCad Schematic Library File.\n",
         )
 
     # Extract symbols into a dictionary with symbol names as keys. 
@@ -164,7 +171,7 @@ def load_sch_lib(lib, filename=None, lib_search_paths_=None, lib_section=None):
         lib.add_parts(
             Part(
                 part_defn=symbol,  # A list of lists that define the part.
-                tool=KICAD7,
+                tool=dflt_tool,
                 dest=LIBRARY,
                 filename=filename,
                 name=symbol_name,
