@@ -473,7 +473,7 @@ def part_to_sexp(part, tx=Tx()):
         [
             "symbol",
             ["lib_id", lib_id],
-            ["at", origin.x, origin.y, 0],
+            ["at", origin.x, origin.y, angle],
             ["unit", unit_num],
             ["exclude_from_sim", "no"],
             ["in_bom", "yes"],
@@ -491,7 +491,7 @@ def part_to_sexp(part, tx=Tx()):
                 "property",
                 "Reference",
                 part.ref,
-                ["at", origin.x, origin.y - 2.54, 0],
+                ["at", origin.x, origin.y - 2.54, angle],
                 ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]],
             ]
         )
@@ -504,7 +504,7 @@ def part_to_sexp(part, tx=Tx()):
                 "property",
                 "Value",
                 str(part.value),
-                ["at", origin.x, origin.y + 2.54, 0],
+                ["at", origin.x, origin.y + 2.54, angle],
                 ["effects", ["font", ["size", 1.27, 1.27]], ["justify", "left"]],
             ]
         )
@@ -517,7 +517,7 @@ def part_to_sexp(part, tx=Tx()):
                 "property",
                 "Footprint",
                 getattr(part, "footprint", ""),
-                ["at", origin.x, origin.y, 0],
+                ["at", origin.x, origin.y, angle],
                 ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
             ]
         )
@@ -530,7 +530,7 @@ def part_to_sexp(part, tx=Tx()):
                 "property",
                 "Datasheet",
                 getattr(part, "datasheet", "~") or "~",
-                ["at", origin.x, origin.y, 0],
+                ["at", origin.x, origin.y, angle],
                 ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
             ]
         )
@@ -543,7 +543,7 @@ def part_to_sexp(part, tx=Tx()):
                 "property",
                 "Description",
                 getattr(part, "description", "") or "",
-                ["at", origin.x, origin.y, 0],
+                ["at", origin.x, origin.y, angle],
                 ["effects", ["font", ["size", 1.27, 1.27]], ["hide", "yes"]],
             ]
         )
@@ -568,7 +568,7 @@ def part_to_sexp(part, tx=Tx()):
                             "property",
                             field_name,
                             str(field_value),
-                            ["at", origin.x, origin.y + y_offset, 0],
+                            ["at", origin.x, origin.y + y_offset, angle],
                             [
                                 "effects",
                                 ["font", ["size", 1.27, 1.27]],
