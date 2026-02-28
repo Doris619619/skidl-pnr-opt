@@ -9,6 +9,7 @@ Layer 3: End-to-end circuit generation
 Layer 4: KiCad CLI validation (skipped if kicad-cli not installed)
 """
 
+import importlib
 import os
 import re
 import shutil
@@ -18,21 +19,23 @@ import uuid
 
 import pytest
 
+from skidl import get_default_tool
 from skidl.geometry import BBox, Point, Tx
-from skidl.tools.kicad9.sexp_schematic import (
-    A_SIZES,
-    MILS_TO_MM,
-    _calc_sheet_tx,
-    _fix_sheet_filename,
-    _gen_uuid,
-    _pick_paper_size,
-    create_title_block_sexp,
-)
+
+tool = get_default_tool()
+sexp_schematic = importlib.import_module(f"skidl.tools.{tool}.sexp_schematic")
+A_SIZES = sexp_schematic.A_SIZES
+MILS_TO_MM = sexp_schematic.MILS_TO_MM
+_calc_sheet_tx = sexp_schematic._calc_sheet_tx
+_fix_sheet_filename = sexp_schematic._fix_sheet_filename
+_gen_uuid = sexp_schematic._gen_uuid
+_pick_paper_size = sexp_schematic._pick_paper_size
+create_title_block_sexp = sexp_schematic.create_title_block_sexp
 
 
-# Skip entire module unless default tool is KICAD9.
-if os.getenv("SKIDL_TOOL") not in ('KICAD9',):
-    pytest.skip("Tests require KICAD9 as default tool", allow_module_level=True)
+# Skip entire module for early versions of KiCad.
+if os.getenv("SKIDL_TOOL") in ('KICAD5',):
+    pytest.skip("Tests require KiCad version > 5 as the default tool", allow_module_level=True)
 
 
 # ===========================================================================
@@ -306,9 +309,7 @@ def output_dir():
 
 def _generate_simple_divider(output_dir):
     """Generate a simple voltage divider schematic (2 resistors in series)."""
-    from skidl import KICAD9, Circuit, Net, Part, set_default_tool
-
-    set_default_tool(KICAD9)
+    from skidl import Circuit, Net, Part, set_default_tool
 
     circuit = Circuit(name="divider_test")
 
@@ -339,14 +340,15 @@ def _generate_simple_divider(output_dir):
 
 def _generate_and_gate(output_dir):
     """Generate the and_gate.py reference circuit (devbisme's test case)."""
-    from skidl import KICAD9, Circuit, Net, Part, set_default_tool
-
-    set_default_tool(KICAD9)
+    from skidl import Circuit, Net, Part, set_default_tool
 
     circuit = Circuit(name="and_gate_test")
 
     with circuit:
-        q = Part(lib="Transistor_BJT", name="Q_PNP_CBE", dest="TEMPLATE", symtx="V")
+        try:
+            q = Part(lib="Transistor_BJT", name="Q_PNP_CBE", dest="TEMPLATE", symtx="V")
+        except FileNotFoundError:
+            q = Part(lib="Device", name="Q_PNP_CBE", dest="TEMPLATE", symtx="V")
         r = Part("Device", "R", dest="TEMPLATE")
 
         gnd, vcc = Net("GND"), Net("VCC")
@@ -383,9 +385,7 @@ def _generate_and_gate(output_dir):
 
 def _generate_multi_part(output_dir):
     """Generate a circuit with R + C to verify both types in lib_symbols."""
-    from skidl import KICAD9, Circuit, Net, Part, set_default_tool
-
-    set_default_tool(KICAD9)
+    from skidl import Circuit, Net, Part, set_default_tool
 
     circuit = Circuit(name="multi_part_test")
 

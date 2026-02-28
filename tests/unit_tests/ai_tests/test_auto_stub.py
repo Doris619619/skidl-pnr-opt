@@ -8,27 +8,29 @@ Layer 2: Integration tests with circuit generation
 Layer 3: KiCad CLI validation (skipped if kicad-cli not installed)
 """
 
+import importlib
 import os
 import re
 import shutil
 import tempfile
 
 import pytest
+from skidl import get_default_tool
 
-from skidl.tools.kicad9.gen_schematic import (
-    FIXABLE_ERROR_TYPES,
-    _POWER_NET_RE,
-    _classify_and_stub_complex_nets,
-    _parse_erc_report,
-    _setup_kicad_env,
-    _stub_nets_for_erc_errors,
-    auto_stub_nets,
-)
+tool = get_default_tool()
+gen_schematic = importlib.import_module(f"skidl.tools.{tool}.gen_schematic")
+FIXABLE_ERROR_TYPES = gen_schematic.FIXABLE_ERROR_TYPES
+_POWER_NET_RE = gen_schematic._POWER_NET_RE
+_classify_and_stub_complex_nets = gen_schematic._classify_and_stub_complex_nets
+_parse_erc_report = gen_schematic._parse_erc_report
+_setup_kicad_env = gen_schematic._setup_kicad_env
+_stub_nets_for_erc_errors = gen_schematic._stub_nets_for_erc_errors
+auto_stub_nets = gen_schematic.auto_stub_nets
 
 
-# Skip entire module unless default tool is KICAD9.
-if os.getenv("SKIDL_TOOL") not in ('KICAD9',):
-    pytest.skip("Tests require KICAD9 as default tool", allow_module_level=True)
+# Skip entire module for early versions of KiCad.
+if os.getenv("SKIDL_TOOL") in ('KICAD5',):
+    pytest.skip("Tests require KiCad version > 5 as the default tool", allow_module_level=True)
 
 
 # ===========================================================================
@@ -316,9 +318,7 @@ def output_dir():
 
 def _generate_divider(output_dir, auto_stub=False):
     """Generate a simple voltage divider schematic."""
-    from skidl import KICAD9, Circuit, Net, Part, set_default_tool
-
-    set_default_tool(KICAD9)
+    from skidl import Circuit, Net, Part, set_default_tool
 
     circuit = Circuit(name="divider_test")
 
@@ -345,14 +345,15 @@ def _generate_divider(output_dir, auto_stub=False):
 
 def _generate_and_gate_auto_stub(output_dir):
     """Generate the and_gate circuit with auto_stub=True."""
-    from skidl import KICAD9, Circuit, Net, Part, set_default_tool
-
-    set_default_tool(KICAD9)
+    from skidl import Circuit, Net, Part, set_default_tool
 
     circuit = Circuit(name="and_gate_auto")
 
     with circuit:
-        q = Part(lib="Transistor_BJT", name="Q_PNP_CBE", dest="TEMPLATE", symtx="V")
+        try:
+            q = Part(lib="Transistor_BJT", name="Q_PNP_CBE", dest="TEMPLATE", symtx="V")
+        except FileNotFoundError:
+            q = Part(lib="Device", name="Q_PNP_CBE", dest="TEMPLATE", symtx="V")
         r = Part("Device", "R", dest="TEMPLATE")
 
         gnd, vcc = Net("GND"), Net("VCC")
@@ -437,9 +438,7 @@ class TestExplicitOverride:
 
     def test_explicit_stub_false_on_gnd(self, output_dir):
         """User sets stub=False on GND; it stays wired, not a label."""
-        from skidl import KICAD9, Circuit, Net, Part, set_default_tool
-
-        set_default_tool(KICAD9)
+        from skidl import Circuit, Net, Part, set_default_tool
 
         circuit = Circuit(name="explicit_test")
 
@@ -529,9 +528,8 @@ class TestRowBasedPlacer:
     @requires_kicad_libs
     def test_large_group_uses_row_placer(self, output_dir):
         """A circuit with >20 connected parts should use row-based placement."""
-        from skidl import KICAD9, Circuit, Net, Part, set_default_tool
+        from skidl import Circuit, Net, Part, set_default_tool
 
-        set_default_tool(KICAD9)
         circuit = Circuit(name="row_placer_test")
 
         with circuit:
@@ -570,9 +568,8 @@ class TestSelectiveRouting:
     @requires_kicad_libs
     def test_simple_nets_stay_wired(self, output_dir):
         """2-pin short-distance nets should remain as wires, not labels."""
-        from skidl import KICAD9, Circuit, Net, Part, set_default_tool
+        from skidl import Circuit, Net, Part, set_default_tool
 
-        set_default_tool(KICAD9)
         circuit = Circuit(name="wire_test")
 
         with circuit:
@@ -655,27 +652,35 @@ class TestLayoutReadiness:
     """Tests for layout readiness features."""
 
     def test_setup_kicad_env(self):
-        """_setup_kicad_env sets KICAD9_FOOTPRINT_DIR when not already set."""
-        old = os.environ.pop("KICAD9_FOOTPRINT_DIR", None)
+        """_setup_kicad_env sets KiCad footprint directory when not already set."""
+        from skidl import get_default_tool
+
+        kicad_version = get_default_tool()[len("kicad"):]
+
+        old = os.environ.pop(f"KICAD{kicad_version}_FOOTPRINT_DIR", None)
         try:
             _setup_kicad_env()
-            fp_dir = os.environ.get("KICAD9_FOOTPRINT_DIR", "")
+            fp_dir = os.environ.get(f"KICAD{kicad_version}_FOOTPRINT_DIR", "")
             if os.path.isdir("/usr/share/kicad/footprints"):
                 assert fp_dir == "/usr/share/kicad/footprints"
         finally:
             if old:
-                os.environ["KICAD9_FOOTPRINT_DIR"] = old
+                os.environ[f"KICAD{kicad_version}_FOOTPRINT_DIR"] = old
             else:
-                os.environ.pop("KICAD9_FOOTPRINT_DIR", None)
+                os.environ.pop(f"KICAD{kicad_version}_FOOTPRINT_DIR", None)
 
     def test_setup_kicad_env_preserves_existing(self):
-        """_setup_kicad_env does not override an existing KICAD9_FOOTPRINT_DIR."""
-        os.environ["KICAD9_FOOTPRINT_DIR"] = "/custom/path"
+        """_setup_kicad_env does not override an existing KiCad footprint directory."""
+        from skidl import get_default_tool
+
+        kicad_version = get_default_tool()[len("kicad"):]
+
+        os.environ[f"KICAD{kicad_version}_FOOTPRINT_DIR"] = "/custom/path"
         try:
             _setup_kicad_env()
-            assert os.environ["KICAD9_FOOTPRINT_DIR"] == "/custom/path"
+            assert os.environ[f"KICAD{kicad_version}_FOOTPRINT_DIR"] == "/custom/path"
         finally:
-            del os.environ["KICAD9_FOOTPRINT_DIR"]
+            del os.environ[f"KICAD{kicad_version}_FOOTPRINT_DIR"]
 
     @requires_kicad_libs
     def test_footprint_property_emitted(self, output_dir):
