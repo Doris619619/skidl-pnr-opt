@@ -1,5 +1,9 @@
 # History
 
+## 2.2.2 (2026-04-03)
+
+- Schematic generation added for KiCad 6, 7, 8 and 9.
+
 ## 2.2.1 (2025-12-13)
 
 - Pin aliases are now updated after pin deletion, renaming, renumbering, and swapping.
