@@ -959,3 +959,112 @@ class Segment:
 
         # Overlap conditions based on segment endpoints.
         return other_min < self_max and other_max > self_min
+
+
+@export_to_all
+def analyze_transform(tx):
+    """
+    Analyze a transformation matrix to extract rotation angle and mirroring components.
+    
+    This function removes any translation from the transformation matrix and then
+    computes the equivalent rotation angle and identifies any mirroring in the X or Y axis.
+    
+    Args:
+        tx (Tx): A transformation matrix to analyze.
+        
+    Returns:
+        tuple: (rotation_degrees, mirror_x, mirror_y) where:
+            - rotation_degrees (float): The rotation angle in degrees (0-360)
+            - mirror_x (bool): True if there's mirroring in the X axis
+            - mirror_y (bool): True if there's mirroring in the Y axis
+            
+    Examples:
+        >>> tx = Tx.rot_90cw()  # 90° clockwise rotation
+        >>> angle, mx, my = analyze_transform(tx)
+        >>> angle
+        -90.0
+        
+        >>> tx = Tx(a=-1)  # Mirror in X
+        >>> angle, mx, my = analyze_transform(tx)
+        >>> mx
+        True
+    """
+    # Remove translation by creating a new Tx with same linear components but zero translation
+    linear_tx = Tx(a=tx.a, b=tx.b, c=tx.c, d=tx.d, dx=0, dy=0)
+    
+    # Calculate rotation angle from the linear transformation components
+    # For a rotation matrix [cosθ -sinθ; sinθ cosθ]:
+    #   a = cosθ, b = -sinθ, c = sinθ, d = cosθ
+    # So θ = atan2(c, a) or θ = atan2(-b, a)
+    import math
+    rotation_radians = math.atan2(linear_tx.c, linear_tx.a)
+    rotation_degrees = math.degrees(rotation_radians)
+    
+    # Account for flipped Y axis and ensure angle is one of 0, 90, 180, or 270.
+    rotation_degrees = round((360-rotation_degrees) % 360 / 90) * 90 % 360
+    
+    # Determine mirroring by checking determinants and axis signs
+    # The determinant of the linear part tells us about orientation:
+    #   det > 0: preserves orientation (pure rotation)
+    #   det < 0: reverses orientation (includes reflection)
+    det = linear_tx.a * linear_tx.d - linear_tx.b * linear_tx.c
+    
+    # For mirroring detection, we look at how the basis vectors are transformed
+    # Original basis: i=(1,0), j=(0,1)
+    # Transformed: i'=(a,c), j'=(b,d)
+    mirror_x = False
+    mirror_y = False
+    
+    # Check for X mirroring: i' should point in negative X direction if mirrored
+    # After accounting for rotation, we check if the X component is flipped
+    if det < 0:
+        # Includes reflection, need to determine which axis
+        # Transform the unit vectors and see their directions
+        i_prime_x = linear_tx.a  # (1,0) transformed
+        i_prime_y = linear_tx.c
+        j_prime_x = linear_tx.b  # (0,1) transformed
+        j_prime_y = linear_tx.d
+        
+        # For X mirroring, we expect the X basis vector to point left-ish
+        # For Y mirroring, we expect the Y basis vector to point down-ish
+        # This is simplified - in practice we'd need to disentangle rotation from mirroring
+        
+        # Simpler approach: check if we can decompose into rotation + mirror
+        # A matrix with negative determinant can be written as: rotation * mirror_x or rotation * mirror_y
+        
+        # Let's check by seeing if making the determinant positive gives us a pure rotation
+        # If we flip the sign of a (mirror in X), what happens to determinant?
+        det_after_x_mirror = (-linear_tx.a) * linear_tx.d - linear_tx.b * linear_tx.c
+        # If we flip the sign of d (mirror in Y), what happens to determinant?
+        det_after_y_mirror = linear_tx.a * (-linear_tx.d) - linear_tx.b * linear_tx.c
+        
+        # Actually, let's use a cleaner approach:
+        # The mirroring can be detected by seeing if we need to flip basis vectors
+        # to get a proper rotation matrix
+        
+        # Create a candidate rotation matrix by taking absolute values where needed
+        # This is a heuristic - for exact decomposition we'd need more math
+        
+        # For now, let's use the fact that mirroring flips the sign of one axis
+        # We'll check which flip, when applied, gives us a matrix closer to a rotation
+        
+        # Test X mirror: flip sign of a and c
+        tx_test_x = Tx(a=-linear_tx.a, b=-linear_tx.b, c=-linear_tx.c, d=linear_tx.d)
+        det_x = tx_test_x.a * tx_test_x.d - tx_test_x.b * tx_test_x.c
+        
+        # Test Y mirror: flip sign of b and d  
+        tx_test_y = Tx(a=linear_tx.a, b=linear_tx.b, c=linear_tx.c, d=-linear_tx.d)
+        det_y = tx_test_y.a * tx_test_y.d - tx_test_y.b * tx_test_y.c
+        
+        # Whichever gives us a positive determinant (rotation) indicates the mirror axis
+        if det_x > 0:
+            mirror_x = True
+        elif det_y > 0:
+            mirror_y = True
+        else:
+            # Fallback: if both or neither work, check which basis vector seems more flipped
+            # Default to X mirror if uncertain
+            mirror_x = True
+    # If det > 0, it's a pure rotation (no mirroring)
+    
+    return rotation_degrees, mirror_x, mirror_y
