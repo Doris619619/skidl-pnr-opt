@@ -24,7 +24,7 @@ from collections import OrderedDict
 
 from simp_sexp import Sexp
 
-from skidl.geometry import Point, Tx, analyze_transform
+from skidl.geometry import Point, Tx
 from skidl.pckg_info import __version__
 from skidl.schematics.net_terminal import NetTerminal
 from skidl.utilities import export_to_all
@@ -435,7 +435,7 @@ def part_to_sexp(part, tx=Tx()):
         Sexp: Symbol S-expression.
     """
     part_tx = getattr(part, "tx", Tx())
-    angle, mx, my = analyze_transform(part_tx)
+    angle, mx, my = part_tx.analyze_transform()
     if mx:
         mirror = ["mirror", "x"]
     elif my:
