@@ -6,11 +6,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>skidl.net &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.net &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../../_static/documentation_options.js?v=16656018"></script>
+    <script src="../../_static/documentation_options.js?v=219dea72"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/bizstyle.js"></script>
@@ -32,7 +32,7 @@
         <li class="right" >
           <a href="../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.net</a></li> 
       </ul>
@@ -329,7 +329,8 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">circuit</span> <span class="o">=</span> <span class="kc">None</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_netclasses</span> <span class="o">=</span> <span class="n">NetClasses</span><span class="p">()</span>  <span class="c1"># Net classes directly assigned to this net.</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">code</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># This is the net number used in a KiCad netlist file.</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">stub</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># Net is not a stub for schematic generation.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stub</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># Net is not a stub for schematic generation.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stub_explicit</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># True if user explicitly set stub.</span>
 
         <span class="c1"># Set the net name directly to the passed-in name without any adjustment.</span>
         <span class="c1"># The net name will be adjusted when it is added to the circuit which</span>
@@ -1625,11 +1626,12 @@
     <span class="k">def</span> <span class="nf">stub</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">val</span><span class="p">):</span>
 <span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Set the stub status for this net.</span>
-<span class="sd">        </span>
+
 <span class="sd">        Args:</span>
 <span class="sd">            val (bool): True to make this a stub net, False otherwise.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_stub</span> <span class="o">=</span> <span class="n">val</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stub_explicit</span> <span class="o">=</span> <span class="kc">True</span>
         <span class="k">for</span> <span class="n">pin</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_pins</span><span class="p">():</span>
             <span class="n">pin</span><span class="o">.</span><span class="n">stub</span> <span class="o">=</span> <span class="n">val</span>
 
@@ -1974,13 +1976,13 @@
         <li class="right" >
           <a href="../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.net</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

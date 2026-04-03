@@ -6,11 +6,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>skidl.tools.kicad9.gen_svg &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.tools.kicad9.gen_svg &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../../../../_static/documentation_options.js?v=16656018"></script>
+    <script src="../../../../_static/documentation_options.js?v=219dea72"></script>
     <script src="../../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../../../_static/bizstyle.js"></script>
@@ -32,7 +32,7 @@
         <li class="right" >
           <a href="../../../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../../../index.html" accesskey="U">Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.tools.kicad9.gen_svg</a></li> 
       </ul>
@@ -323,10 +323,14 @@
                 <span class="p">)</span>
             <span class="n">start</span> <span class="o">=</span> <span class="n">Point</span><span class="p">(</span><span class="o">*</span><span class="n">shape</span><span class="p">[</span><span class="s2">&quot;at&quot;</span><span class="p">][</span><span class="mi">0</span><span class="p">:</span><span class="mi">2</span><span class="p">])</span>
             <span class="n">rotation</span> <span class="o">=</span> <span class="n">shape</span><span class="p">[</span><span class="s2">&quot;at&quot;</span><span class="p">][</span><span class="mi">2</span><span class="p">]</span>
-            <span class="n">justify</span> <span class="o">=</span> <span class="p">(</span>
-                <span class="n">shape</span><span class="p">[</span><span class="s2">&quot;effects&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;justify&quot;</span><span class="p">,</span> <span class="n">shape</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;justify&quot;</span><span class="p">,</span> <span class="s2">&quot;left&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-            <span class="p">)</span>
-            <span class="nb">dir</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;right&quot;</span><span class="p">:</span> <span class="n">Point</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="s2">&quot;left&quot;</span><span class="p">:</span> <span class="n">Point</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)}[</span><span class="n">justify</span><span class="p">]</span> <span class="o">*</span> <span class="n">Tx</span><span class="p">()</span><span class="o">.</span><span class="n">rot</span><span class="p">(</span>
+            <span class="n">justify</span> <span class="o">=</span> <span class="n">shape</span><span class="p">[</span><span class="s2">&quot;effects&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;justify&quot;</span><span class="p">,</span> <span class="s2">&quot;center&quot;</span><span class="p">)</span> <span class="c1"># Center is default if missing.</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">justify</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+                <span class="n">justify</span> <span class="o">=</span> <span class="n">justify</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="c1"># Use only horizontal justification.</span>
+            <span class="n">justify</span> <span class="o">=</span> <span class="n">justify</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+            <span class="c1"># Direction vector for text orientation and justification.</span>
+            <span class="c1"># (e.g. &quot;right&quot; means text extends to the right of the start point.)</span>
+            <span class="c1"># This is wrong for center justification, but &quot;oh, well&quot;...</span>
+            <span class="nb">dir</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;right&quot;</span><span class="p">:</span> <span class="n">Point</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="s2">&quot;left&quot;</span><span class="p">:</span> <span class="n">Point</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span> <span class="s2">&quot;center&quot;</span><span class="p">:</span> <span class="n">Point</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)}[</span><span class="n">justify</span><span class="p">]</span> <span class="o">*</span> <span class="n">Tx</span><span class="p">()</span><span class="o">.</span><span class="n">rot</span><span class="p">(</span>
                 <span class="n">rotation</span>
             <span class="p">)</span>
             <span class="n">end</span> <span class="o">=</span> <span class="n">start</span> <span class="o">+</span> <span class="nb">dir</span>
@@ -587,13 +591,13 @@
         <li class="right" >
           <a href="../../../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../../../index.html" >Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.tools.kicad9.gen_svg</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

@@ -7,11 +7,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>skidl.schematics.sch_node module &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.schematics.sch_node module &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../_static/documentation_options.js?v=16656018"></script>
+    <script src="../_static/documentation_options.js?v=219dea72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/bizstyle.js"></script>
@@ -33,7 +33,7 @@
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.sch_node module</a></li> 
       </ul>
     </div>  
@@ -146,6 +146,23 @@ children are included using hierarchical sheets.</p>
 </dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="skidl.schematics.sch_node.SchNode.get_boundary_nets">
+<span class="sig-name descname"><span class="pre">get_boundary_nets</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/skidl/schematics/sch_node.html#SchNode.get_boundary_nets"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#skidl.schematics.sch_node.SchNode.get_boundary_nets" title="Link to this definition">¶</a></dt>
+<dd><p>Return nets that connect parts inside this node to parts outside.</p>
+<p>A boundary net has at least one pin on a part in this node and at
+least one pin on a part NOT in this node. These nets need
+hierarchical labels/pins when the node becomes a hierarchical sheet.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Returns<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List of boundary Net objects.</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference external" href="https://docs.python.org/3.13/library/stdtypes.html#list" title="(in Python v3.13)">list</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="skidl.schematics.sch_node.SchNode.get_internal_nets">
 <span class="sig-name descname"><span class="pre">get_internal_nets</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/skidl/schematics/sch_node.html#SchNode.get_internal_nets"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#skidl.schematics.sch_node.SchNode.get_internal_nets" title="Link to this definition">¶</a></dt>
 <dd><p>Return a list of nets that have at least one pin on a part in this node.</p>
@@ -224,6 +241,7 @@ children are included using hierarchical sheets.</p>
 <li><a class="reference internal" href="#skidl.schematics.sch_node.SchNode.filename_sz"><code class="docutils literal notranslate"><span class="pre">SchNode.filename_sz</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.sch_node.SchNode.find_node_with_part"><code class="docutils literal notranslate"><span class="pre">SchNode.find_node_with_part()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.sch_node.SchNode.flatten"><code class="docutils literal notranslate"><span class="pre">SchNode.flatten()</span></code></a></li>
+<li><a class="reference internal" href="#skidl.schematics.sch_node.SchNode.get_boundary_nets"><code class="docutils literal notranslate"><span class="pre">SchNode.get_boundary_nets()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.sch_node.SchNode.get_internal_nets"><code class="docutils literal notranslate"><span class="pre">SchNode.get_internal_nets()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.sch_node.SchNode.get_internal_pins"><code class="docutils literal notranslate"><span class="pre">SchNode.get_internal_pins()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.sch_node.SchNode.get_or_add_child"><code class="docutils literal notranslate"><span class="pre">SchNode.get_or_add_child()</span></code></a></li>
@@ -266,12 +284,12 @@ children are included using hierarchical sheets.</p>
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.sch_node module</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

@@ -6,11 +6,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>skidl.geometry &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.geometry &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../../_static/documentation_options.js?v=16656018"></script>
+    <script src="../../_static/documentation_options.js?v=219dea72"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/bizstyle.js"></script>
@@ -32,7 +32,7 @@
         <li class="right" >
           <a href="../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.geometry</a></li> 
       </ul>
@@ -341,6 +341,116 @@
 <span class="sd">            Tx: A new transformation matrix with translation set to (0,0).</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="k">return</span> <span class="n">Tx</span><span class="p">(</span><span class="n">a</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">c</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">d</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Tx.analyze_transform">
+<a class="viewcode-back" href="../../rst_output/skidl.geometry.html#skidl.geometry.Tx.analyze_transform">[docs]</a>
+    <span class="k">def</span> <span class="nf">analyze_transform</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Analyze a transformation matrix to extract rotation angle and mirroring components.</span>
+<span class="sd">        </span>
+<span class="sd">        This function removes any translation from the transformation matrix and then</span>
+<span class="sd">        computes the equivalent rotation angle and identifies any mirroring in the X or Y axis.</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            tx (Tx): A transformation matrix to analyze.</span>
+<span class="sd">            </span>
+<span class="sd">        Returns:</span>
+<span class="sd">            tuple: (rotation_degrees, mirror_x, mirror_y) where:</span>
+<span class="sd">                - rotation_degrees (float): The rotation angle in degrees (0-360)</span>
+<span class="sd">                - mirror_x (bool): True if there&#39;s mirroring in the X axis</span>
+<span class="sd">                - mirror_y (bool): True if there&#39;s mirroring in the Y axis</span>
+<span class="sd">                </span>
+<span class="sd">        Examples:</span>
+<span class="sd">            &gt;&gt;&gt; tx = Tx.rot_90cw()  # 90° clockwise rotation</span>
+<span class="sd">            &gt;&gt;&gt; angle, mx, my = analyze_transform(tx)</span>
+<span class="sd">            &gt;&gt;&gt; angle</span>
+<span class="sd">            -90.0</span>
+<span class="sd">            </span>
+<span class="sd">            &gt;&gt;&gt; tx = Tx(a=-1)  # Mirror in X</span>
+<span class="sd">            &gt;&gt;&gt; angle, mx, my = analyze_transform(tx)</span>
+<span class="sd">            &gt;&gt;&gt; mx</span>
+<span class="sd">            True</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># Remove translation by creating a new Tx with same linear components but zero translation</span>
+        <span class="n">linear_tx</span> <span class="o">=</span> <span class="n">Tx</span><span class="p">(</span><span class="n">a</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">c</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">d</span><span class="p">,</span> <span class="n">dx</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">dy</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        
+        <span class="c1"># Calculate rotation angle from the linear transformation components</span>
+        <span class="c1"># For a rotation matrix [cosθ -sinθ; sinθ cosθ]:</span>
+        <span class="c1">#   a = cosθ, b = -sinθ, c = sinθ, d = cosθ</span>
+        <span class="c1"># So θ = atan2(c, a) or θ = atan2(-b, a)</span>
+        <span class="kn">import</span> <span class="nn">math</span>
+        <span class="n">rotation_radians</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">atan2</span><span class="p">(</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">c</span><span class="p">,</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">a</span><span class="p">)</span>
+        <span class="n">rotation_degrees</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">degrees</span><span class="p">(</span><span class="n">rotation_radians</span><span class="p">)</span>
+        
+        <span class="c1"># Account for flipped Y axis and ensure angle is one of 0, 90, 180, or 270.</span>
+        <span class="n">rotation_degrees</span> <span class="o">=</span> <span class="nb">round</span><span class="p">((</span><span class="mi">360</span><span class="o">-</span><span class="n">rotation_degrees</span><span class="p">)</span> <span class="o">%</span> <span class="mi">360</span> <span class="o">/</span> <span class="mi">90</span><span class="p">)</span> <span class="o">*</span> <span class="mi">90</span> <span class="o">%</span> <span class="mi">360</span>
+        
+        <span class="c1"># Determine mirroring by checking determinants and axis signs</span>
+        <span class="c1"># The determinant of the linear part tells us about orientation:</span>
+        <span class="c1">#   det &gt; 0: preserves orientation (pure rotation)</span>
+        <span class="c1">#   det &lt; 0: reverses orientation (includes reflection)</span>
+        <span class="n">det</span> <span class="o">=</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">a</span> <span class="o">*</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">d</span> <span class="o">-</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">b</span> <span class="o">*</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">c</span>
+        
+        <span class="c1"># For mirroring detection, we look at how the basis vectors are transformed</span>
+        <span class="c1"># Original basis: i=(1,0), j=(0,1)</span>
+        <span class="c1"># Transformed: i&#39;=(a,c), j&#39;=(b,d)</span>
+        <span class="n">mirror_x</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="n">mirror_y</span> <span class="o">=</span> <span class="kc">False</span>
+        
+        <span class="c1"># Check for X mirroring: i&#39; should point in negative X direction if mirrored</span>
+        <span class="c1"># After accounting for rotation, we check if the X component is flipped</span>
+        <span class="k">if</span> <span class="n">det</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c1"># Includes reflection, need to determine which axis</span>
+            <span class="c1"># Transform the unit vectors and see their directions</span>
+            <span class="n">i_prime_x</span> <span class="o">=</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">a</span>  <span class="c1"># (1,0) transformed</span>
+            <span class="n">i_prime_y</span> <span class="o">=</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">c</span>
+            <span class="n">j_prime_x</span> <span class="o">=</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">b</span>  <span class="c1"># (0,1) transformed</span>
+            <span class="n">j_prime_y</span> <span class="o">=</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">d</span>
+            
+            <span class="c1"># For X mirroring, we expect the X basis vector to point left-ish</span>
+            <span class="c1"># For Y mirroring, we expect the Y basis vector to point down-ish</span>
+            <span class="c1"># This is simplified - in practice we&#39;d need to disentangle rotation from mirroring</span>
+            
+            <span class="c1"># Simpler approach: check if we can decompose into rotation + mirror</span>
+            <span class="c1"># A matrix with negative determinant can be written as: rotation * mirror_x or rotation * mirror_y</span>
+            
+            <span class="c1"># Let&#39;s check by seeing if making the determinant positive gives us a pure rotation</span>
+            <span class="c1"># If we flip the sign of a (mirror in X), what happens to determinant?</span>
+            <span class="n">det_after_x_mirror</span> <span class="o">=</span> <span class="p">(</span><span class="o">-</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">a</span><span class="p">)</span> <span class="o">*</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">d</span> <span class="o">-</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">b</span> <span class="o">*</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">c</span>
+            <span class="c1"># If we flip the sign of d (mirror in Y), what happens to determinant?</span>
+            <span class="n">det_after_y_mirror</span> <span class="o">=</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">a</span> <span class="o">*</span> <span class="p">(</span><span class="o">-</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">d</span><span class="p">)</span> <span class="o">-</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">b</span> <span class="o">*</span> <span class="n">linear_tx</span><span class="o">.</span><span class="n">c</span>
+            
+            <span class="c1"># Actually, let&#39;s use a cleaner approach:</span>
+            <span class="c1"># The mirroring can be detected by seeing if we need to flip basis vectors</span>
+            <span class="c1"># to get a proper rotation matrix</span>
+            
+            <span class="c1"># Create a candidate rotation matrix by taking absolute values where needed</span>
+            <span class="c1"># This is a heuristic - for exact decomposition we&#39;d need more math</span>
+            
+            <span class="c1"># For now, let&#39;s use the fact that mirroring flips the sign of one axis</span>
+            <span class="c1"># We&#39;ll check which flip, when applied, gives us a matrix closer to a rotation</span>
+            
+            <span class="c1"># Test X mirror: flip sign of a and c</span>
+            <span class="n">tx_test_x</span> <span class="o">=</span> <span class="n">Tx</span><span class="p">(</span><span class="n">a</span><span class="o">=-</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="o">=-</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="o">=-</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">c</span><span class="p">,</span> <span class="n">d</span><span class="o">=</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">d</span><span class="p">)</span>
+            <span class="n">det_x</span> <span class="o">=</span> <span class="n">tx_test_x</span><span class="o">.</span><span class="n">a</span> <span class="o">*</span> <span class="n">tx_test_x</span><span class="o">.</span><span class="n">d</span> <span class="o">-</span> <span class="n">tx_test_x</span><span class="o">.</span><span class="n">b</span> <span class="o">*</span> <span class="n">tx_test_x</span><span class="o">.</span><span class="n">c</span>
+            
+            <span class="c1"># Test Y mirror: flip sign of b and d  </span>
+            <span class="n">tx_test_y</span> <span class="o">=</span> <span class="n">Tx</span><span class="p">(</span><span class="n">a</span><span class="o">=</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="o">=</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">c</span><span class="p">,</span> <span class="n">d</span><span class="o">=-</span><span class="n">linear_tx</span><span class="o">.</span><span class="n">d</span><span class="p">)</span>
+            <span class="n">det_y</span> <span class="o">=</span> <span class="n">tx_test_y</span><span class="o">.</span><span class="n">a</span> <span class="o">*</span> <span class="n">tx_test_y</span><span class="o">.</span><span class="n">d</span> <span class="o">-</span> <span class="n">tx_test_y</span><span class="o">.</span><span class="n">b</span> <span class="o">*</span> <span class="n">tx_test_y</span><span class="o">.</span><span class="n">c</span>
+            
+            <span class="c1"># Whichever gives us a positive determinant (rotation) indicates the mirror axis</span>
+            <span class="k">if</span> <span class="n">det_x</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">mirror_x</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">elif</span> <span class="n">det_y</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">mirror_y</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># Fallback: if both or neither work, check which basis vector seems more flipped</span>
+                <span class="c1"># Default to X mirror if uncertain</span>
+                <span class="n">mirror_x</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="c1"># If det &gt; 0, it&#39;s a pure rotation (no mirroring)</span>
+        
+        <span class="k">return</span> <span class="n">rotation_degrees</span><span class="p">,</span> <span class="n">mirror_x</span><span class="p">,</span> <span class="n">mirror_y</span></div>
 </div>
 
 
@@ -1129,13 +1239,13 @@
         <li class="right" >
           <a href="../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.geometry</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

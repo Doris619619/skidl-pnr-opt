@@ -2558,7 +2558,7 @@ still want to see a graphical depiction of their circuit.
 To support this, SKiDL can show the interconnection of parts as:
 
 * a [static schematic in SVG](#svg-schematics),
-* an [editable KiCad schematic](#kicad-schematics) (currently only V5 is supported),
+* an [editable KiCad schematic](#kicad-schematics),
 * or a [directed graph](#dot-graphs) using the [graphviz DOT language](https://graphviz.org/doc/info/lang.html).
 
 The following circuit for a transistor-based AND gate will be used to illustrate each alternative:
@@ -2709,13 +2709,9 @@ To generate a schematic file that can be opened with KiCad Eeschema, just append
 generate_schematic()
 ```
 
-This will drop an Eeschema file called `and_gate_top.sch` into the same directory as the `and_gate.py` file.
+This will drop an Eeschema file called `and_gate.kicad_sch` into the same directory as the `and_gate.py` file.
 
-![KiCad 5 Eeschema AND_GATE schematic.](images/and_gate_4.png)
-
-Currently, this file can only be opened using KiCad version 5.
-(If you're using a more recent version of KiCad, then there are some
-[Docker files for running different versions of KiCad](https://github.com/devbisme/docker_kicad) without affecting your current setup.)
+![KiCad Eeschema AND_GATE schematic.](images/and_gate_4.png)
 
 The `generate_schematic()` function accepts these parameters:
 

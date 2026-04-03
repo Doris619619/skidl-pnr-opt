@@ -6,11 +6,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>skidl.schematics.place &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.schematics.place &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../../../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../../../_static/documentation_options.js?v=16656018"></script>
+    <script src="../../../_static/documentation_options.js?v=219dea72"></script>
     <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../../_static/bizstyle.js"></script>
@@ -32,7 +32,7 @@
         <li class="right" >
           <a href="../../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../../index.html" accesskey="U">Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.place</a></li> 
       </ul>
@@ -61,6 +61,7 @@
 <span class="kn">from</span> <span class="nn">copy</span> <span class="kn">import</span> <span class="n">copy</span>
 
 <span class="kn">from</span> <span class="nn">skidl</span> <span class="kn">import</span> <span class="n">Pin</span>
+<span class="kn">from</span> <span class="nn">skidl.logger</span> <span class="kn">import</span> <span class="n">active_logger</span>
 <span class="kn">from</span> <span class="nn">skidl.utilities</span> <span class="kn">import</span> <span class="n">export_to_all</span><span class="p">,</span> <span class="n">rmv_attr</span><span class="p">,</span> <span class="n">sgn</span>
 <span class="kn">from</span> <span class="nn">.debug_draw</span> <span class="kn">import</span> <span class="p">(</span>
     <span class="n">draw_end</span><span class="p">,</span>
@@ -1204,6 +1205,100 @@
         <span class="k">return</span> <span class="n">connected_parts</span><span class="p">,</span> <span class="n">internal_nets</span><span class="p">,</span> <span class="n">floating_parts</span></div>
 
 
+    <span class="n">_ROW_PLACE_THRESHOLD</span> <span class="o">=</span> <span class="mi">20</span>
+
+<div class="viewcode-block" id="Placer.place_connected_parts_rowbased">
+<a class="viewcode-back" href="../../../rst_output/skidl.schematics.place.html#skidl.schematics.place.Placer.place_connected_parts_rowbased">[docs]</a>
+    <span class="k">def</span> <span class="nf">place_connected_parts_rowbased</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">parts</span><span class="p">,</span> <span class="n">nets</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Place connected parts using a BFS row-based layout (O(n)).</span>
+
+<span class="sd">        For large groups (&gt;_ROW_PLACE_THRESHOLD), the O(n²) force-directed</span>
+<span class="sd">        placer is too slow. This places parts in rows following BFS order</span>
+<span class="sd">        from the most-connected seed part.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            node (Node): Node with parts.</span>
+<span class="sd">            parts (list): List of Parts connected by nets.</span>
+<span class="sd">            nets (list): List of internal Nets connecting the parts.</span>
+<span class="sd">            options (dict): Dict of options and values that enable/disable functions.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="kn">from</span> <span class="nn">collections</span> <span class="kn">import</span> <span class="n">deque</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">parts</span><span class="p">:</span>
+            <span class="k">return</span>
+
+        <span class="c1"># Add bboxes and anchor/pull pins (needed by router).</span>
+        <span class="n">add_placement_bboxes</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>
+        <span class="n">add_anchor_pull_pins</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="n">nets</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>
+
+        <span class="c1"># Build adjacency graph: part → set of neighbors.</span>
+        <span class="n">part_set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+        <span class="n">adjacency</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">set</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">net</span> <span class="ow">in</span> <span class="n">nets</span><span class="p">:</span>
+            <span class="n">net_parts</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="p">(</span><span class="n">pin</span><span class="o">.</span><span class="n">part</span> <span class="k">for</span> <span class="n">pin</span> <span class="ow">in</span> <span class="n">net</span><span class="o">.</span><span class="n">pins</span><span class="p">)</span> <span class="k">if</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">part_set</span><span class="p">]</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">p1</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">net_parts</span><span class="p">):</span>
+                <span class="k">for</span> <span class="n">p2</span> <span class="ow">in</span> <span class="n">net_parts</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="mi">1</span><span class="p">:]:</span>
+                    <span class="n">adjacency</span><span class="p">[</span><span class="nb">id</span><span class="p">(</span><span class="n">p1</span><span class="p">)]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">p2</span><span class="p">)</span>
+                    <span class="n">adjacency</span><span class="p">[</span><span class="nb">id</span><span class="p">(</span><span class="n">p2</span><span class="p">)]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">p1</span><span class="p">)</span>
+
+        <span class="c1"># Pick seed: part with most connections.</span>
+        <span class="n">id_to_part</span> <span class="o">=</span> <span class="p">{</span><span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">):</span> <span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">}</span>
+        <span class="n">seed</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">adjacency</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">),</span> <span class="nb">set</span><span class="p">())))</span>
+
+        <span class="c1"># BFS traversal, placing in rows.</span>
+        <span class="n">visited</span> <span class="o">=</span> <span class="p">{</span><span class="nb">id</span><span class="p">(</span><span class="n">seed</span><span class="p">)}</span>
+        <span class="n">queue</span> <span class="o">=</span> <span class="n">deque</span><span class="p">([</span><span class="n">seed</span><span class="p">])</span>
+        <span class="n">order</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">while</span> <span class="n">queue</span><span class="p">:</span>
+            <span class="n">part</span> <span class="o">=</span> <span class="n">queue</span><span class="o">.</span><span class="n">popleft</span><span class="p">()</span>
+            <span class="n">order</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">part</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">neighbor</span> <span class="ow">in</span> <span class="n">adjacency</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">id</span><span class="p">(</span><span class="n">part</span><span class="p">),</span> <span class="nb">set</span><span class="p">()):</span>
+                <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="n">neighbor</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">visited</span><span class="p">:</span>
+                    <span class="n">visited</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="nb">id</span><span class="p">(</span><span class="n">neighbor</span><span class="p">))</span>
+                    <span class="n">queue</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">neighbor</span><span class="p">)</span>
+
+        <span class="c1"># Add any parts not reached by BFS (disconnected within the group).</span>
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="n">part</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">visited</span><span class="p">:</span>
+                <span class="n">order</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">part</span><span class="p">)</span>
+
+        <span class="c1"># Compute total area to determine max row width.</span>
+        <span class="n">total_area</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span>
+            <span class="nb">max</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">w</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="nb">max</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">h</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">order</span>
+        <span class="p">)</span>
+        <span class="n">max_row_width</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">total_area</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span>
+
+        <span class="c1"># Place parts in rows.</span>
+        <span class="n">col_x</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">row_y</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">row_max_h</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">order</span><span class="p">:</span>
+            <span class="n">w</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">part</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">w</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+            <span class="n">h</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">part</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">h</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">col_x</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">col_x</span> <span class="o">+</span> <span class="n">w</span> <span class="o">&gt;</span> <span class="n">max_row_width</span><span class="p">:</span>
+                <span class="c1"># Start new row.</span>
+                <span class="n">row_y</span> <span class="o">+=</span> <span class="n">row_max_h</span> <span class="o">+</span> <span class="n">BLK_INT_PAD</span>
+                <span class="n">col_x</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">row_max_h</span> <span class="o">=</span> <span class="mi">0</span>
+
+            <span class="n">part</span><span class="o">.</span><span class="n">tx</span> <span class="o">=</span> <span class="n">Tx</span><span class="p">()</span><span class="o">.</span><span class="n">move</span><span class="p">(</span><span class="n">Point</span><span class="p">(</span><span class="n">col_x</span><span class="p">,</span> <span class="n">row_y</span><span class="p">))</span>
+            <span class="n">col_x</span> <span class="o">+=</span> <span class="n">w</span> <span class="o">+</span> <span class="n">BLK_INT_PAD</span>
+            <span class="n">row_max_h</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">row_max_h</span><span class="p">,</span> <span class="n">h</span><span class="p">)</span>
+
+        <span class="c1"># Snap to grid.</span>
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">order</span><span class="p">:</span>
+            <span class="n">snap_to_grid</span><span class="p">(</span><span class="n">part</span><span class="p">)</span>
+
+        <span class="c1"># Place NetTerminals around the placed parts.</span>
+        <span class="n">net_terminals</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span> <span class="k">if</span> <span class="n">is_net_terminal</span><span class="p">(</span><span class="n">p</span><span class="p">)]</span>
+        <span class="n">real_parts</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">is_net_terminal</span><span class="p">(</span><span class="n">p</span><span class="p">)]</span>
+        <span class="k">if</span> <span class="n">net_terminals</span><span class="p">:</span>
+            <span class="n">place_net_terminals</span><span class="p">(</span>
+                <span class="n">net_terminals</span><span class="p">,</span> <span class="n">real_parts</span><span class="p">,</span> <span class="n">nets</span><span class="p">,</span> <span class="n">total_part_force</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span>
+            <span class="p">)</span></div>
+
+
 <div class="viewcode-block" id="Placer.place_connected_parts">
 <a class="viewcode-back" href="../../../rst_output/skidl.schematics.place.html#skidl.schematics.place.Placer.place_connected_parts">[docs]</a>
     <span class="k">def</span> <span class="nf">place_connected_parts</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">parts</span><span class="p">,</span> <span class="n">nets</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">):</span>
@@ -1219,6 +1314,11 @@
         <span class="k">if</span> <span class="ow">not</span> <span class="n">parts</span><span class="p">:</span>
             <span class="c1"># Abort if nothing to place.</span>
             <span class="k">return</span>
+
+        <span class="c1"># Use row-based placement for large groups.</span>
+        <span class="n">real_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">is_net_terminal</span><span class="p">(</span><span class="n">p</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">real_count</span> <span class="o">&gt;</span> <span class="n">node</span><span class="o">.</span><span class="n">_ROW_PLACE_THRESHOLD</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">node</span><span class="o">.</span><span class="n">place_connected_parts_rowbased</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="n">nets</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>
 
         <span class="c1"># Add bboxes with surrounding area so parts are not butted against each other.</span>
         <span class="n">add_placement_bboxes</span><span class="p">(</span><span class="n">parts</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>
@@ -1278,6 +1378,22 @@
 
         <span class="k">if</span> <span class="ow">not</span> <span class="n">parts</span><span class="p">:</span>
             <span class="c1"># Abort if nothing to place.</span>
+            <span class="k">return</span>
+
+        <span class="c1"># For large numbers of floating parts, skip the O(n^2) similarity</span>
+        <span class="c1"># computation and force-directed evolution. Just grid-place them.</span>
+        <span class="c1"># This avoids the 100+ second penalty for 60+ identical decoupling caps.</span>
+        <span class="n">_FLOAT_GRID_THRESHOLD</span> <span class="o">=</span> <span class="mi">20</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">_FLOAT_GRID_THRESHOLD</span> <span class="ow">and</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;auto_stub&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="n">add_placement_bboxes</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+            <span class="c1"># Simple grid layout for floating parts.</span>
+            <span class="n">cols</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">))</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">part</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">parts</span><span class="p">):</span>
+                <span class="n">row</span><span class="p">,</span> <span class="n">col</span> <span class="o">=</span> <span class="nb">divmod</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">cols</span><span class="p">)</span>
+                <span class="n">bbox</span> <span class="o">=</span> <span class="n">part</span><span class="o">.</span><span class="n">place_bbox</span>
+                <span class="n">w</span> <span class="o">=</span> <span class="n">bbox</span><span class="o">.</span><span class="n">w</span> <span class="k">if</span> <span class="n">bbox</span><span class="o">.</span><span class="n">w</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">200</span>
+                <span class="n">h</span> <span class="o">=</span> <span class="n">bbox</span><span class="o">.</span><span class="n">h</span> <span class="k">if</span> <span class="n">bbox</span><span class="o">.</span><span class="n">h</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">200</span>
+                <span class="n">part</span><span class="o">.</span><span class="n">tx</span> <span class="o">=</span> <span class="n">Tx</span><span class="p">()</span><span class="o">.</span><span class="n">move</span><span class="p">(</span><span class="n">Point</span><span class="p">(</span><span class="n">col</span> <span class="o">*</span> <span class="n">w</span> <span class="o">*</span> <span class="mf">1.2</span><span class="p">,</span> <span class="n">row</span> <span class="o">*</span> <span class="n">h</span> <span class="o">*</span> <span class="mf">1.2</span><span class="p">))</span>
             <span class="k">return</span>
 
         <span class="c1"># Add bboxes with surrounding area so parts are not butted against each other.</span>
@@ -1458,6 +1574,26 @@
             <span class="c1"># Abort if nothing to place.</span>
             <span class="k">return</span>
 
+        <span class="c1"># For large block counts, use a simple grid layout instead of</span>
+        <span class="c1"># O(n²) force-directed placement.</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">part_blocks</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">node</span><span class="o">.</span><span class="n">_ROW_PLACE_THRESHOLD</span><span class="p">:</span>
+            <span class="n">cols</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">part_blocks</span><span class="p">)</span> <span class="o">**</span> <span class="mf">0.5</span><span class="p">))</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">blk</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">part_blocks</span><span class="p">):</span>
+                <span class="n">row</span><span class="p">,</span> <span class="n">col</span> <span class="o">=</span> <span class="nb">divmod</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">cols</span><span class="p">)</span>
+                <span class="n">w</span> <span class="o">=</span> <span class="n">blk</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">w</span> <span class="k">if</span> <span class="n">blk</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">w</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">500</span>
+                <span class="n">h</span> <span class="o">=</span> <span class="n">blk</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">h</span> <span class="k">if</span> <span class="n">blk</span><span class="o">.</span><span class="n">place_bbox</span><span class="o">.</span><span class="n">h</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">500</span>
+                <span class="n">blk</span><span class="o">.</span><span class="n">tx</span> <span class="o">=</span> <span class="n">Tx</span><span class="p">()</span><span class="o">.</span><span class="n">move</span><span class="p">(</span><span class="n">Point</span><span class="p">(</span><span class="n">col</span> <span class="o">*</span> <span class="p">(</span><span class="n">w</span> <span class="o">+</span> <span class="n">BLK_EXT_PAD</span><span class="p">),</span> <span class="n">row</span> <span class="o">*</span> <span class="p">(</span><span class="n">h</span> <span class="o">+</span> <span class="n">BLK_EXT_PAD</span><span class="p">)))</span>
+                <span class="n">snap_to_grid</span><span class="p">(</span><span class="n">blk</span><span class="p">)</span>
+
+            <span class="c1"># Apply the placement moves of the part blocks to their underlying sources.</span>
+            <span class="k">for</span> <span class="n">blk</span> <span class="ow">in</span> <span class="n">part_blocks</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">blk</span><span class="o">.</span><span class="n">src</span><span class="o">.</span><span class="n">tx</span> <span class="o">=</span> <span class="n">blk</span><span class="o">.</span><span class="n">tx</span>
+                <span class="k">except</span> <span class="ne">AttributeError</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">blk</span><span class="o">.</span><span class="n">src</span><span class="p">:</span>
+                        <span class="n">part</span><span class="o">.</span><span class="n">tx</span> <span class="o">*=</span> <span class="n">blk</span><span class="o">.</span><span class="n">tx</span>
+            <span class="k">return</span>
+
         <span class="c1"># Start off with a random placement of part blocks.</span>
         <span class="n">random_placement</span><span class="p">(</span><span class="n">part_blocks</span><span class="p">)</span>
 
@@ -1528,6 +1664,117 @@
         <span class="n">rmv_attr</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">get_internal_nets</span><span class="p">(),</span> <span class="p">(</span><span class="s2">&quot;parts&quot;</span><span class="p">,))</span></div>
 
 
+    <span class="k">def</span> <span class="nf">_auto_stub_cross_group</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">groups</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Stub nets that span multiple placement groups.</span>
+
+<span class="sd">        When auto_stub is enabled, nets connecting parts in different groups</span>
+<span class="sd">        would require inter-group wiring. Converting them to labels avoids</span>
+<span class="sd">        routing complexity.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            node: The SchNode being placed.</span>
+<span class="sd">            groups: List of sets of parts from group_parts().</span>
+<span class="sd">            options: Dict of options; requires auto_stub=True to take effect.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;auto_stub&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="k">return</span>
+
+        <span class="n">part_to_group</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">group</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">groups</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">group</span><span class="p">:</span>
+                <span class="n">part_to_group</span><span class="p">[</span><span class="nb">id</span><span class="p">(</span><span class="n">part</span><span class="p">)]</span> <span class="o">=</span> <span class="n">i</span>
+
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">parts</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">pin</span> <span class="ow">in</span> <span class="n">part</span><span class="p">:</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">pin</span><span class="o">.</span><span class="n">is_connected</span><span class="p">():</span>
+                    <span class="k">continue</span>
+                <span class="n">net</span> <span class="o">=</span> <span class="n">pin</span><span class="o">.</span><span class="n">net</span>
+                <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">net</span><span class="p">,</span> <span class="s2">&quot;_stub_explicit&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">getattr</span><span class="p">(</span>
+                    <span class="n">net</span><span class="p">,</span> <span class="s2">&quot;stub&quot;</span><span class="p">,</span> <span class="kc">False</span>
+                <span class="p">):</span>
+                    <span class="k">continue</span>
+                <span class="n">pin_groups</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">part_to_group</span><span class="p">[</span><span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">part</span><span class="p">)]</span>
+                    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">net</span><span class="o">.</span><span class="n">pins</span>
+                    <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">part</span><span class="p">)</span> <span class="ow">in</span> <span class="n">part_to_group</span>
+                <span class="p">}</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">pin_groups</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+                    <span class="n">net</span><span class="o">.</span><span class="n">_stub</span> <span class="o">=</span> <span class="kc">True</span>
+                    <span class="n">net</span><span class="o">.</span><span class="n">_stub_explicit</span> <span class="o">=</span> <span class="kc">False</span>
+                    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">net</span><span class="o">.</span><span class="n">get_pins</span><span class="p">():</span>
+                        <span class="n">p</span><span class="o">.</span><span class="n">stub</span> <span class="o">=</span> <span class="kc">True</span>
+
+    <span class="k">def</span> <span class="nf">_auto_stub_large_groups</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">groups</span><span class="p">,</span> <span class="n">internal_nets</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Split oversized placement groups by stubbing 2-pin chain nets.</span>
+
+<span class="sd">        Large groups (e.g. 138-part LED daisy chains) overwhelm the O(n^2)</span>
+<span class="sd">        force-directed placer. This finds 2-pin nets within large groups and</span>
+<span class="sd">        stubs enough of them to break the group into smaller chunks.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            node: The SchNode being placed.</span>
+<span class="sd">            groups: List of sets of parts from group_parts().</span>
+<span class="sd">            internal_nets: Dict mapping net id to net objects.</span>
+<span class="sd">            options: Dict of options; requires auto_stub=True to take effect.</span>
+<span class="sd">                auto_stub_max_group (int): Max parts per group. Default 30.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;auto_stub&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+            <span class="k">return</span>
+
+        <span class="n">max_group</span> <span class="o">=</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;auto_stub_max_group&quot;</span><span class="p">,</span> <span class="mi">20</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">groups</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">group</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">max_group</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="c1"># Collect low-fanout internal nets in this group (chain links</span>
+            <span class="c1"># and small-fanout connections). Prioritize 2-pin nets (chains),</span>
+            <span class="c1"># then 3-pin, then 4-pin.</span>
+            <span class="n">group_ids</span> <span class="o">=</span> <span class="p">{</span><span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">group</span><span class="p">}</span>
+            <span class="n">chain_nets</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">net</span> <span class="ow">in</span> <span class="n">internal_nets</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">net</span><span class="p">,</span> <span class="s2">&quot;_stub_explicit&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">getattr</span><span class="p">(</span>
+                    <span class="n">net</span><span class="p">,</span> <span class="s2">&quot;stub&quot;</span><span class="p">,</span> <span class="kc">False</span>
+                <span class="p">):</span>
+                    <span class="k">continue</span>
+                <span class="n">net_parts</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">part</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">net</span><span class="o">.</span><span class="n">pins</span> <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">part</span><span class="p">)</span> <span class="ow">in</span> <span class="n">group_ids</span>
+                <span class="p">}</span>
+                <span class="k">if</span> <span class="mi">2</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">net_parts</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="mi">4</span><span class="p">:</span>
+                    <span class="n">chain_nets</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="nb">len</span><span class="p">(</span><span class="n">net_parts</span><span class="p">),</span> <span class="n">net</span><span class="p">))</span>
+
+            <span class="c1"># Sort by fanout (prefer stubbing 2-pin nets first).</span>
+            <span class="n">chain_nets</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="n">chain_nets</span> <span class="o">=</span> <span class="p">[</span><span class="n">net</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">net</span> <span class="ow">in</span> <span class="n">chain_nets</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">chain_nets</span><span class="p">:</span>
+                <span class="k">continue</span>
+
+            <span class="n">active_logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;  [auto_stub_large_groups] Group of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">group</span><span class="p">)</span><span class="si">}</span><span class="s2"> parts, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">chain_nets</span><span class="p">)</span><span class="si">}</span><span class="s2"> chain nets, splitting...&quot;</span>
+            <span class="p">)</span>
+
+            <span class="c1"># Stub evenly-spaced chain nets to split the group into chunks</span>
+            <span class="c1"># of ~max_group parts. We need ceil(len/max)-1 cuts minimum.</span>
+            <span class="n">n_cuts</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">group</span><span class="p">)</span> <span class="o">+</span> <span class="n">max_group</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="n">max_group</span><span class="p">)</span>
+            <span class="n">step</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">chain_nets</span><span class="p">)</span> <span class="o">//</span> <span class="p">(</span><span class="n">n_cuts</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">step</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="n">step</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="n">stubbed</span> <span class="o">=</span> <span class="mi">0</span>
+
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">step</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">chain_nets</span><span class="p">),</span> <span class="n">step</span><span class="p">):</span>
+                <span class="n">net</span> <span class="o">=</span> <span class="n">chain_nets</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+                <span class="n">net</span><span class="o">.</span><span class="n">_stub</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">net</span><span class="o">.</span><span class="n">_stub_explicit</span> <span class="o">=</span> <span class="kc">False</span>
+                <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">net</span><span class="o">.</span><span class="n">get_pins</span><span class="p">():</span>
+                    <span class="n">p</span><span class="o">.</span><span class="n">stub</span> <span class="o">=</span> <span class="kc">True</span>
+                <span class="n">stubbed</span> <span class="o">+=</span> <span class="mi">1</span>
+
+            <span class="n">active_logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;  [auto_stub_large_groups] Stubbed </span><span class="si">{</span><span class="n">stubbed</span><span class="si">}</span><span class="s2"> nets&quot;</span>
+            <span class="p">)</span>
+
 <div class="viewcode-block" id="Placer.place">
 <a class="viewcode-back" href="../../../rst_output/skidl.schematics.place.html#skidl.schematics.place.Placer.place">[docs]</a>
     <span class="k">def</span> <span class="nf">place</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">tool</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">):</span>
@@ -1562,6 +1809,20 @@
             <span class="c1"># those that float freely connected only by stub nets.</span>
             <span class="n">connected_parts</span><span class="p">,</span> <span class="n">internal_nets</span><span class="p">,</span> <span class="n">floating_parts</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">group_parts</span><span class="p">(</span><span class="o">**</span><span class="n">options</span><span class="p">)</span>
 
+            <span class="c1"># Auto-stub nets spanning multiple placement groups.</span>
+            <span class="n">node</span><span class="o">.</span><span class="n">_auto_stub_cross_group</span><span class="p">(</span><span class="n">connected_parts</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>
+
+            <span class="c1"># Split oversized groups by stubbing chain nets.</span>
+            <span class="n">node</span><span class="o">.</span><span class="n">_auto_stub_large_groups</span><span class="p">(</span>
+                <span class="n">connected_parts</span><span class="p">,</span> <span class="n">internal_nets</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">options</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;auto_stub&quot;</span><span class="p">,</span> <span class="kc">False</span><span class="p">):</span>
+                <span class="c1"># Re-group after stubbing may have changed connectivity.</span>
+                <span class="n">connected_parts</span><span class="p">,</span> <span class="n">internal_nets</span><span class="p">,</span> <span class="n">floating_parts</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">group_parts</span><span class="p">(</span>
+                    <span class="o">**</span><span class="n">options</span>
+                <span class="p">)</span>
+
             <span class="c1"># Place each group of connected parts.</span>
             <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">connected_parts</span><span class="p">:</span>
                 <span class="n">node</span><span class="o">.</span><span class="n">place_connected_parts</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">group</span><span class="p">),</span> <span class="n">internal_nets</span><span class="p">,</span> <span class="o">**</span><span class="n">options</span><span class="p">)</span>
@@ -1575,9 +1836,7 @@
             <span class="p">)</span>
 
             <span class="c1"># Remove any stuff leftover from this place &amp; route run.</span>
-            <span class="c1"># print(f&quot;added part attrs = {new_part_attrs}&quot;)</span>
             <span class="n">node</span><span class="o">.</span><span class="n">rmv_placement_stuff</span><span class="p">()</span>
-            <span class="c1"># node.show_added_attrs()</span>
 
             <span class="c1"># Calculate the bounding box for the node after placement of parts and children.</span>
             <span class="n">node</span><span class="o">.</span><span class="n">calc_bbox</span><span class="p">()</span>
@@ -1649,13 +1908,13 @@
         <li class="right" >
           <a href="../../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../../index.html" >Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.place</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

@@ -7,11 +7,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>skidl.geometry module &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.geometry module &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../_static/documentation_options.js?v=16656018"></script>
+    <script src="../_static/documentation_options.js?v=219dea72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/bizstyle.js"></script>
@@ -33,7 +33,7 @@
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.geometry module</a></li> 
       </ul>
     </div>  
@@ -542,6 +542,46 @@ y’ = b*x + d*y + dy</p>
 </dd>
 </dl>
 <dl class="py method">
+<dt class="sig sig-object py" id="skidl.geometry.Tx.analyze_transform">
+<span class="sig-name descname"><span class="pre">analyze_transform</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/skidl/geometry.html#Tx.analyze_transform"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#skidl.geometry.Tx.analyze_transform" title="Link to this definition">¶</a></dt>
+<dd><p>Analyze a transformation matrix to extract rotation angle and mirroring components.</p>
+<p>This function removes any translation from the transformation matrix and then
+computes the equivalent rotation angle and identifies any mirroring in the X or Y axis.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>tx</strong> (<a class="reference internal" href="#skidl.geometry.Tx" title="skidl.geometry.Tx"><em>Tx</em></a>) – A transformation matrix to analyze.</p>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><dl class="simple">
+<dt>(rotation_degrees, mirror_x, mirror_y) where:</dt><dd><ul class="simple">
+<li><p>rotation_degrees (float): The rotation angle in degrees (0-360)</p></li>
+<li><p>mirror_x (bool): True if there’s mirroring in the X axis</p></li>
+<li><p>mirror_y (bool): True if there’s mirroring in the Y axis</p></li>
+</ul>
+</dd>
+</dl>
+</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference external" href="https://docs.python.org/3.13/library/stdtypes.html#tuple" title="(in Python v3.13)">tuple</a></p>
+</dd>
+</dl>
+<p class="rubric">Examples</p>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">tx</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">rot_90cw</span><span class="p">()</span>  <span class="c1"># 90° clockwise rotation</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angle</span><span class="p">,</span> <span class="n">mx</span><span class="p">,</span> <span class="n">my</span> <span class="o">=</span> <span class="n">analyze_transform</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angle</span>
+<span class="go">-90.0</span>
+</pre></div>
+</div>
+<div class="doctest highlight-default notranslate"><div class="highlight"><pre><span></span><span class="gp">&gt;&gt;&gt; </span><span class="n">tx</span> <span class="o">=</span> <span class="n">Tx</span><span class="p">(</span><span class="n">a</span><span class="o">=-</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># Mirror in X</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">angle</span><span class="p">,</span> <span class="n">mx</span><span class="p">,</span> <span class="n">my</span> <span class="o">=</span> <span class="n">analyze_transform</span><span class="p">(</span><span class="n">tx</span><span class="p">)</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">mx</span>
+<span class="go">True</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="skidl.geometry.Tx.flip_x">
 <span class="sig-name descname"><span class="pre">flip_x</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/skidl/geometry.html#Tx.flip_x"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#skidl.geometry.Tx.flip_x" title="Link to this definition">¶</a></dt>
 <dd><p>Return a new Tx with a horizontal flip (mirror across y-axis).</p>
@@ -776,6 +816,7 @@ L = rotate 90° left (CCW), R = rotate 90° right (CW)</p>
 </ul>
 </li>
 <li><a class="reference internal" href="#skidl.geometry.Tx"><code class="docutils literal notranslate"><span class="pre">Tx</span></code></a><ul>
+<li><a class="reference internal" href="#skidl.geometry.Tx.analyze_transform"><code class="docutils literal notranslate"><span class="pre">Tx.analyze_transform()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.geometry.Tx.flip_x"><code class="docutils literal notranslate"><span class="pre">Tx.flip_x()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.geometry.Tx.flip_y"><code class="docutils literal notranslate"><span class="pre">Tx.flip_y()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.geometry.Tx.from_symtx"><code class="docutils literal notranslate"><span class="pre">Tx.from_symtx()</span></code></a></li>
@@ -825,12 +866,12 @@ L = rotate 90° left (CCW), R = rotate 90° right (CW)</p>
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.geometry module</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

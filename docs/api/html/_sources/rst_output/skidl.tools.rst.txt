@@ -19,3 +19,11 @@ Subpackages
    skidl.tools.kicad9
    skidl.tools.skidl
    skidl.tools.spice
+
+Submodules
+----------
+
+.. toctree::
+   :maxdepth: 4
+
+   skidl.tools.inject_labels

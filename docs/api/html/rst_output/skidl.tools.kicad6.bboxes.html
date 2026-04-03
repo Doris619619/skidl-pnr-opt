@@ -7,11 +7,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>skidl.tools.kicad6.bboxes module &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.tools.kicad6.bboxes module &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../_static/documentation_options.js?v=16656018"></script>
+    <script src="../_static/documentation_options.js?v=219dea72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/bizstyle.js"></script>
@@ -33,7 +33,7 @@
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.tools.kicad6.bboxes module</a></li> 
       </ul>
     </div>  
@@ -70,16 +70,23 @@
 <dt class="sig sig-object py" id="skidl.tools.kicad6.bboxes.calc_symbol_bbox">
 <span class="sig-prename descclassname"><span class="pre">skidl.tools.kicad6.bboxes.</span></span><span class="sig-name descname"><span class="pre">calc_symbol_bbox</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">part</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/skidl/tools/kicad6/bboxes.html#calc_symbol_bbox"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#skidl.tools.kicad6.bboxes.calc_symbol_bbox" title="Link to this definition">¶</a></dt>
 <dd><p>Return the bounding box of the part symbol.</p>
+<p>Calculates bounding box from the symbol’s draw_cmds including pins,
+graphical objects (polyline, circle, rectangle, arc), and text.
+Coordinates are converted from library mm to placement-engine mils.</p>
 <dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
-<li><p><strong>part</strong> – Part object for which an SVG symbol will be created.</p></li>
-<li><p><strong>options</strong> (<a class="reference external" href="https://docs.python.org/3.13/library/stdtypes.html#dict" title="(in Python v3.13)"><em>dict</em></a>) – Various options to control bounding box calculation:
-graphics_only (boolean): If true, compute bbox of graphics (no text).</p></li>
+<li><p><strong>part</strong> – Part object for which a bounding box will be created.</p></li>
+<li><p><strong>options</strong> (<a class="reference external" href="https://docs.python.org/3.13/library/stdtypes.html#dict" title="(in Python v3.13)"><em>dict</em></a>) – Various options to control bounding box calculation.</p></li>
 </ul>
 </dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p>[overall_bbox, unit1_bbox, unit2_bbox, …] in mils.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>List of BBoxes</p>
+</dd>
 </dl>
-<p>Returns: List of BBoxes for all units in the part symbol.</p>
 </dd></dl>
 
 </section>
@@ -132,12 +139,12 @@ graphics_only (boolean): If true, compute bbox of graphics (no text).</p></li>
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.tools.kicad6.bboxes module</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

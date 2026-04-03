@@ -7,11 +7,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>skidl package &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl package &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../_static/documentation_options.js?v=16656018"></script>
+    <script src="../_static/documentation_options.js?v=219dea72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/bizstyle.js"></script>
@@ -33,7 +33,7 @@
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl package</a></li> 
       </ul>
     </div>  
@@ -175,6 +175,23 @@ generate_netlist()</p>
 </li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.tools.spice.html">skidl.tools.spice package</a><ul>
 <li class="toctree-l4"><a class="reference internal" href="skidl.tools.spice.html#submodules">Submodules</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="skidl.tools.html#submodules">Submodules</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="skidl.tools.inject_labels.html">skidl.tools.inject_labels module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.extract_instances"><code class="docutils literal notranslate"><span class="pre">extract_instances()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.extract_lib_pins"><code class="docutils literal notranslate"><span class="pre">extract_lib_pins()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.inject_labels"><code class="docutils literal notranslate"><span class="pre">inject_labels()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.is_unnamed_net"><code class="docutils literal notranslate"><span class="pre">is_unnamed_net()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.label_angle_from_position"><code class="docutils literal notranslate"><span class="pre">label_angle_from_position()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.main"><code class="docutils literal notranslate"><span class="pre">main()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.make_global_label_sexp"><code class="docutils literal notranslate"><span class="pre">make_global_label_sexp()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.parse_netlist"><code class="docutils literal notranslate"><span class="pre">parse_netlist()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.parse_sexp"><code class="docutils literal notranslate"><span class="pre">parse_sexp()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.pin_world_pos"><code class="docutils literal notranslate"><span class="pre">pin_world_pos()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="skidl.tools.inject_labels.html#skidl.tools.inject_labels.readable_net_name"><code class="docutils literal notranslate"><span class="pre">readable_net_name()</span></code></a></li>
 </ul>
 </li>
 </ul>
@@ -331,6 +348,7 @@ generate_netlist()</p>
 </ul>
 </li>
 <li class="toctree-l2"><a class="reference internal" href="skidl.geometry.html#skidl.geometry.Tx"><code class="docutils literal notranslate"><span class="pre">Tx</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="skidl.geometry.html#skidl.geometry.Tx.analyze_transform"><code class="docutils literal notranslate"><span class="pre">Tx.analyze_transform()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.geometry.html#skidl.geometry.Tx.flip_x"><code class="docutils literal notranslate"><span class="pre">Tx.flip_x()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.geometry.html#skidl.geometry.Tx.flip_y"><code class="docutils literal notranslate"><span class="pre">Tx.flip_y()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.geometry.html#skidl.geometry.Tx.from_symtx"><code class="docutils literal notranslate"><span class="pre">Tx.from_symtx()</span></code></a></li>
@@ -768,12 +786,12 @@ generate_netlist()</p>
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl package</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

@@ -6,11 +6,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>skidl.schematics.sch_node &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.schematics.sch_node &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../../../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../../../_static/documentation_options.js?v=16656018"></script>
+    <script src="../../../_static/documentation_options.js?v=219dea72"></script>
     <script src="../../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../../_static/bizstyle.js"></script>
@@ -32,7 +32,7 @@
         <li class="right" >
           <a href="../../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../../index.html" accesskey="U">Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.sch_node</a></li> 
       </ul>
@@ -328,6 +328,36 @@
 
 
 
+<div class="viewcode-block" id="SchNode.get_boundary_nets">
+<a class="viewcode-back" href="../../../rst_output/skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.get_boundary_nets">[docs]</a>
+    <span class="k">def</span> <span class="nf">get_boundary_nets</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return nets that connect parts inside this node to parts outside.</span>
+
+<span class="sd">        A boundary net has at least one pin on a part in this node and at</span>
+<span class="sd">        least one pin on a part NOT in this node. These nets need</span>
+<span class="sd">        hierarchical labels/pins when the node becomes a hierarchical sheet.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            list: List of boundary Net objects.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">node_part_ids</span> <span class="o">=</span> <span class="p">{</span><span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">parts</span><span class="p">}</span>
+        <span class="n">boundary</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">seen</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">parts</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">pin</span> <span class="ow">in</span> <span class="n">part</span><span class="p">:</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">pin</span><span class="o">.</span><span class="n">is_connected</span><span class="p">():</span>
+                    <span class="k">continue</span>
+                <span class="n">net</span> <span class="o">=</span> <span class="n">pin</span><span class="o">.</span><span class="n">net</span>
+                <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="n">net</span><span class="p">)</span> <span class="ow">in</span> <span class="n">seen</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="nb">id</span><span class="p">(</span><span class="n">net</span><span class="p">))</span>
+                <span class="c1"># Check if any pin on this net is on a part outside this node.</span>
+                <span class="n">ext_pins</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">net</span><span class="o">.</span><span class="n">pins</span> <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">part</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">node_part_ids</span><span class="p">]</span>
+                <span class="k">if</span> <span class="n">ext_pins</span><span class="p">:</span>
+                    <span class="n">boundary</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">net</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">boundary</span></div>
+
+
 <div class="viewcode-block" id="SchNode.external_bbox">
 <a class="viewcode-back" href="../../../rst_output/skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.external_bbox">[docs]</a>
     <span class="k">def</span> <span class="nf">external_bbox</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
@@ -489,13 +519,13 @@
         <li class="right" >
           <a href="../../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../../../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../../index.html" >Module code</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.sch_node</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

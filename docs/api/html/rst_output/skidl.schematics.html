@@ -7,11 +7,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>skidl.schematics package &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.schematics package &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../_static/documentation_options.js?v=16656018"></script>
+    <script src="../_static/documentation_options.js?v=219dea72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/bizstyle.js"></script>
@@ -33,7 +33,7 @@
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics package</a></li> 
       </ul>
     </div>  
@@ -79,6 +79,7 @@
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.place.html#skidl.schematics.place.Placer.place"><code class="docutils literal notranslate"><span class="pre">Placer.place()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.place.html#skidl.schematics.place.Placer.place_blocks"><code class="docutils literal notranslate"><span class="pre">Placer.place_blocks()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.place.html#skidl.schematics.place.Placer.place_connected_parts"><code class="docutils literal notranslate"><span class="pre">Placer.place_connected_parts()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="skidl.schematics.place.html#skidl.schematics.place.Placer.place_connected_parts_rowbased"><code class="docutils literal notranslate"><span class="pre">Placer.place_connected_parts_rowbased()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.place.html#skidl.schematics.place.Placer.place_floating_parts"><code class="docutils literal notranslate"><span class="pre">Placer.place_floating_parts()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.place.html#skidl.schematics.place.Placer.rmv_placement_stuff"><code class="docutils literal notranslate"><span class="pre">Placer.rmv_placement_stuff()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.place.html#skidl.schematics.place.Placer.show_added_attrs"><code class="docutils literal notranslate"><span class="pre">Placer.show_added_attrs()</span></code></a></li>
@@ -119,6 +120,7 @@
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.filename_sz"><code class="docutils literal notranslate"><span class="pre">SchNode.filename_sz</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.find_node_with_part"><code class="docutils literal notranslate"><span class="pre">SchNode.find_node_with_part()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.flatten"><code class="docutils literal notranslate"><span class="pre">SchNode.flatten()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.get_boundary_nets"><code class="docutils literal notranslate"><span class="pre">SchNode.get_boundary_nets()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.get_internal_nets"><code class="docutils literal notranslate"><span class="pre">SchNode.get_internal_nets()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.get_internal_pins"><code class="docutils literal notranslate"><span class="pre">SchNode.get_internal_pins()</span></code></a></li>
 <li class="toctree-l3"><a class="reference internal" href="skidl.schematics.sch_node.html#skidl.schematics.sch_node.SchNode.get_or_add_child"><code class="docutils literal notranslate"><span class="pre">SchNode.get_or_add_child()</span></code></a></li>
@@ -180,12 +182,12 @@
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics package</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>

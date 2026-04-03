@@ -2296,7 +2296,7 @@ still want to see a graphical depiction of their circuit.
 To support this, SKiDL can show the interconnection of parts as:</p>
 <ul>
 <li>a <a href="#svg-schematics">static schematic in SVG</a>,</li>
-<li>an <a href="#kicad-schematics">editable KiCad schematic</a> (currently only V5 is supported),</li>
+<li>an <a href="#kicad-schematics">editable KiCad schematic</a>,</li>
 <li>or a <a href="#dot-graphs">directed graph</a> using the <a href="https://graphviz.org/doc/info/lang.html">graphviz DOT language</a>.</li>
 </ul>
 <p>The following circuit for a transistor-based AND gate will be used to illustrate each alternative:</p>
@@ -2435,11 +2435,8 @@ a named <em>stub</em> at each connection point:</p>
 <div class="highlight"><pre><span></span><code><span class="n">generate_schematic</span><span class="p">()</span>
 </code></pre></div>
 
-<p>This will drop an Eeschema file called <code>and_gate_top.sch</code> into the same directory as the <code>and_gate.py</code> file.</p>
-<p><img alt="KiCad 5 Eeschema AND_GATE schematic." src="images/and_gate_4.png"></p>
-<p>Currently, this file can only be opened using KiCad version 5.
-(If you're using a more recent version of KiCad, then there are some
-<a href="https://github.com/devbisme/docker_kicad">Docker files for running different versions of KiCad</a> without affecting your current setup.)</p>
+<p>This will drop an Eeschema file called <code>and_gate_top.kicad_sch</code> into the same directory as the <code>and_gate.py</code> file.</p>
+<p><img alt="KiCad Eeschema AND_GATE schematic." src="images/and_gate_4.png"></p>
 <p>The <code>generate_schematic()</code> function accepts these parameters:</p>
 <ul>
 <li><code>filepath</code> (<code>str</code>, optional): The directory where the schematic files are placed. Defaults to ".".</li>

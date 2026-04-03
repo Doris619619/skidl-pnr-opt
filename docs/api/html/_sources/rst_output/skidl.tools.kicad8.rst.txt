@@ -20,3 +20,4 @@ Submodules
    skidl.tools.kicad8.gen_svg
    skidl.tools.kicad8.gen_xml
    skidl.tools.kicad8.lib
+   skidl.tools.kicad8.sexp_schematic

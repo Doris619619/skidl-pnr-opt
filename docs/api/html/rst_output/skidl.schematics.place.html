@@ -7,11 +7,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>skidl.schematics.place module &#8212; SKiDL 2.2.1 documentation</title>
+    <title>skidl.schematics.place module &#8212; SKiDL 2.2.2 documentation</title>
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=fa44fd50" />
     <link rel="stylesheet" type="text/css" href="../_static/bizstyle.css?v=a66e137f" />
     
-    <script src="../_static/documentation_options.js?v=16656018"></script>
+    <script src="../_static/documentation_options.js?v=219dea72"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/bizstyle.js"></script>
@@ -33,7 +33,7 @@
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.place module</a></li> 
       </ul>
     </div>  
@@ -154,6 +154,25 @@ list: List of Parts that are not connected to anything (floating).</p>
 </dd></dl>
 
 <dl class="py method">
+<dt class="sig sig-object py" id="skidl.schematics.place.Placer.place_connected_parts_rowbased">
+<span class="sig-name descname"><span class="pre">place_connected_parts_rowbased</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parts</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">nets</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/skidl/schematics/place.html#Placer.place_connected_parts_rowbased"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#skidl.schematics.place.Placer.place_connected_parts_rowbased" title="Link to this definition">¶</a></dt>
+<dd><p>Place connected parts using a BFS row-based layout (O(n)).</p>
+<p>For large groups (&gt;_ROW_PLACE_THRESHOLD), the O(n²) force-directed
+placer is too slow. This places parts in rows following BFS order
+from the most-connected seed part.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>node</strong> (<a class="reference internal" href="skidl.node.html#skidl.node.Node" title="skidl.node.Node"><em>Node</em></a>) – Node with parts.</p></li>
+<li><p><strong>parts</strong> (<a class="reference external" href="https://docs.python.org/3.13/library/stdtypes.html#list" title="(in Python v3.13)"><em>list</em></a>) – List of Parts connected by nets.</p></li>
+<li><p><strong>nets</strong> (<a class="reference external" href="https://docs.python.org/3.13/library/stdtypes.html#list" title="(in Python v3.13)"><em>list</em></a>) – List of internal Nets connecting the parts.</p></li>
+<li><p><strong>options</strong> (<a class="reference external" href="https://docs.python.org/3.13/library/stdtypes.html#dict" title="(in Python v3.13)"><em>dict</em></a>) – Dict of options and values that enable/disable functions.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
 <dt class="sig sig-object py" id="skidl.schematics.place.Placer.place_floating_parts">
 <span class="sig-name descname"><span class="pre">place_floating_parts</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">parts</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">options</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/skidl/schematics/place.html#Placer.place_floating_parts"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#skidl.schematics.place.Placer.place_floating_parts" title="Link to this definition">¶</a></dt>
 <dd><p>Place individual parts.</p>
@@ -265,6 +284,7 @@ list: List of Parts that are not connected to anything (floating).</p>
 <li><a class="reference internal" href="#skidl.schematics.place.Placer.place"><code class="docutils literal notranslate"><span class="pre">Placer.place()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.place.Placer.place_blocks"><code class="docutils literal notranslate"><span class="pre">Placer.place_blocks()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.place.Placer.place_connected_parts"><code class="docutils literal notranslate"><span class="pre">Placer.place_connected_parts()</span></code></a></li>
+<li><a class="reference internal" href="#skidl.schematics.place.Placer.place_connected_parts_rowbased"><code class="docutils literal notranslate"><span class="pre">Placer.place_connected_parts_rowbased()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.place.Placer.place_floating_parts"><code class="docutils literal notranslate"><span class="pre">Placer.place_floating_parts()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.place.Placer.rmv_placement_stuff"><code class="docutils literal notranslate"><span class="pre">Placer.rmv_placement_stuff()</span></code></a></li>
 <li><a class="reference internal" href="#skidl.schematics.place.Placer.show_added_attrs"><code class="docutils literal notranslate"><span class="pre">Placer.show_added_attrs()</span></code></a></li>
@@ -308,12 +328,12 @@ list: List of Parts that are not connected to anything (floating).</p>
         <li class="right" >
           <a href="../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">SKiDL 2.2.2 documentation</a> &#187;</li>
         <li class="nav-item nav-item-this"><a href="">skidl.schematics.place module</a></li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-    &#169; Copyright 2016-2025, Dave Vandenbout.
+    &#169; Copyright 2016-2026, Dave Vandenbout.
       Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.2.3.
     </div>
   </body>
