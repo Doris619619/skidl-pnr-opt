@@ -34,9 +34,7 @@ lib_suffix = [".kicad_sym"]
 @export_to_all
 def default_lib_paths():
     """Return default list of directories to search for part libraries."""
-    from skidl import get_default_tool
-
-    kicad_version = get_default_tool()[len("kicad"):]
+    kicad_version = __name__.split(".")[-2][len("kicad"):]
 
     # Start search for part libraries in the current directory.
     paths = ["."]
@@ -55,9 +53,7 @@ def default_lib_paths():
 @export_to_all
 def get_fp_lib_tbl_dir():
     """Get the path where the global fp-lib-table file is found."""
-    from skidl import get_default_tool
-
-    kicad_version = get_default_tool()[len("kicad"):]
+    kicad_version = __name__.split(".")[-2][len("kicad"):]
 
     paths = (
         f"$HOME/.config/kicad/{kicad_version}.0",
