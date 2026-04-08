@@ -1,5 +1,9 @@
 # History
 
+## 2.2.3 (2026-04-08)
+
+- Fixed #287 to remove circular import error that occurs under Windows.
+
 ## 2.2.2 (2026-04-03)
 
 - Schematic generation added for KiCad 6, 7, 8 and 9.
