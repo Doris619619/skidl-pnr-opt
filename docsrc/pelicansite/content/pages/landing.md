@@ -66,6 +66,7 @@ create a finished circuit board.
     - [DOT Graphs](#dot-graphs)
 - [Converting Existing Designs to SKiDL](#converting-existing-designs-to-skidl)
 - [SPICE Simulations](#spice-simulations)
+- [Community Add-Ons](#community-add-ons)
 
 
 
@@ -2777,3 +2778,9 @@ Or do anything else that a SKiDL-based design supports.
 You can describe a circuit using SKiDL and run a SPICE simulation on it.
 Go [here](https://github.com/devbisme/skidl/blob/master/tests/examples/spice-sim-intro/spice-sim-intro.ipynb)
 to get the complete details.
+
+
+# Community Add-Ons
+
+Members of the user community have created a number of external tools that enhance SKiDL.
+You can see a list of them [here]({filename}third-party.md).
