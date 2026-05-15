@@ -1144,6 +1144,136 @@ class Placer:
 
     _ROW_PLACE_THRESHOLD = 20
 
+    def _part_ref_key(node, part):
+        """Return a stable sort key for parts."""
+        ref = str(getattr(part, "ref", "") or "")
+        name = str(getattr(part, "name", "") or "")
+        value = str(getattr(part, "value", "") or "")
+        return (ref.lower(), name.lower(), value.lower(), id(part))
+
+    def _net_names_of(node, part):
+        """Safely return set of connected net names for a part."""
+        names = set()
+        for pin in getattr(part, "pins", []):
+            if not getattr(pin, "is_connected", lambda: False)():
+                continue
+            net = getattr(pin, "net", None)
+            if net is None:
+                continue
+            name = getattr(net, "name", None)
+            if name:
+                names.add(str(name))
+        return names
+
+    def _is_power_net_name(node, name):
+        """Heuristic detection of power/ground net names."""
+        if not name:
+            return False
+        text = str(name).upper()
+        power_tokens = (
+            "VCC",
+            "VDD",
+            "VSS",
+            "GND",
+            "AGND",
+            "DGND",
+            "PGND",
+            "VBUS",
+            "VIN",
+            "VOUT",
+            "3V3",
+            "5V",
+            "12V",
+            "1V8",
+            "2V5",
+            "PWR",
+        )
+        return any(token in text for token in power_tokens)
+
+    def _classify_part_role(node, part):
+        """Classify part role with conservative heuristics."""
+        ref = str(getattr(part, "ref", "") or "").upper()
+        name = str(getattr(part, "name", "") or "").upper()
+        value = str(getattr(part, "value", "") or "").upper()
+        net_names = node._net_names_of(part)
+        power_nets = [n for n in net_names if node._is_power_net_name(n)]
+        has_power = bool(power_nets)
+        has_gnd = any("GND" in n.upper() for n in net_names)
+        pin_count = len(getattr(part, "pins", []))
+
+        if ref.startswith(("PWR", "V", "GND")) or node._is_power_net_name(name) or node._is_power_net_name(value):
+            return "power"
+
+        if ref.startswith("C"):
+            value_norm = value.replace(" ", "")
+            decap_tokens = ("100NF", "0.1UF", "0.1U", "1UF", "10NF", "47NF")
+            if (has_power and has_gnd) or any(token in value_norm for token in decap_tokens):
+                return "decoupling"
+
+        if ref.startswith("U") or pin_count >= 8:
+            return "ic"
+
+        if ref.startswith(("J", "P", "CN")):
+            return "connector"
+
+        if ref.startswith(("R", "C", "L", "D", "Q")):
+            return "passive"
+
+        return "other"
+
+    def _find_main_part(node, parts, adjacency=None):
+        """Find a stable main part for a connected group."""
+        if not parts:
+            return None
+        role_map = {part: node._classify_part_role(part) for part in parts}
+        ic_parts = [part for part in parts if role_map[part] == "ic"]
+        if ic_parts:
+            # 使用稳定排序打破并列，确保同样输入始终落在同一主控器件上。
+            ranked = sorted(ic_parts, key=node._part_ref_key)
+            return max(ranked, key=lambda part: len(getattr(part, "pins", [])))
+
+        def degree(part):
+            if adjacency is not None:
+                return len(adjacency.get(id(part), set()))
+            return len(node._net_names_of(part))
+
+        ranked = sorted(parts, key=node._part_ref_key)
+        return max(ranked, key=degree)
+
+    def _place_row(node, parts, start_x, start_y, direction=1, gap=None):
+        """Place parts in one row and return row bbox."""
+        if gap is None:
+            gap = BLK_INT_PAD
+
+        x = start_x
+        min_x = float("inf")
+        min_y = float("inf")
+        max_x = float("-inf")
+        max_y = float("-inf")
+        max_h = 0
+        for part in parts:
+            bbox = part.place_bbox
+            w = max(bbox.w, GRID)
+            h = max(bbox.h, GRID)
+            if direction >= 0:
+                part.tx = Tx().move(Point(x, start_y))
+                x += w + gap
+            else:
+                part.tx = Tx().move(Point(x - w, start_y))
+                x -= w + gap
+
+            placed = part.place_bbox * part.tx
+            min_x = min(min_x, placed.min.x)
+            min_y = min(min_y, placed.min.y)
+            max_x = max(max_x, placed.max.x)
+            max_y = max(max_y, placed.max.y)
+            max_h = max(max_h, h)
+
+        if min_x == float("inf"):
+            return BBox(Point(start_x, start_y), Point(start_x, start_y))
+
+        return BBox(Point(min_x, min_y), Point(max_x, max_y))
+
     def place_connected_parts_rowbased(node, parts, nets, **options):
         """Place connected parts using a BFS row-based layout (O(n)).
 
@@ -1166,8 +1296,16 @@ class Placer:
         add_placement_bboxes(parts, **options)
         add_anchor_pull_pins(parts, nets, **options)
 
+        human_readable = options.get("human_readable", False)
+
+        # Separate the NetTerminals from the other parts.
+        net_terminals = [p for p in parts if is_net_terminal(p)]
+        real_parts = [p for p in parts if not is_net_terminal(p)]
+        if not real_parts:
+            return
+
         # Build adjacency graph: part → set of neighbors.
-        part_set = set(parts)
+        part_set = set(real_parts)
         adjacency = defaultdict(set)
         for net in nets:
             net_parts = [p for p in (pin.part for pin in net.pins) if p in part_set]
@@ -1176,58 +1314,179 @@ class Placer:
                     adjacency[id(p1)].add(p2)
                     adjacency[id(p2)].add(p1)
 
-        # Pick seed: part with most connections.
-        id_to_part = {id(p): p for p in parts}
-        seed = max(parts, key=lambda p: len(adjacency.get(id(p), set())))
+        if human_readable:
+            # 用稳定可读布局替代随机/机械 BFS，减少多次运行时版图漂移。
+            roles = {part: node._classify_part_role(part) for part in real_parts}
+            main_part = node._find_main_part(real_parts, adjacency=adjacency)
+            main_part.tx = Tx().move(Point(0, 0))
+            main_bbox = main_part.place_bbox * main_part.tx
 
-        # BFS traversal, placing in rows.
-        visited = {id(seed)}
-        queue = deque([seed])
-        order = []
-        while queue:
-            part = queue.popleft()
-            order.append(part)
-            for neighbor in adjacency.get(id(part), set()):
-                if id(neighbor) not in visited:
-                    visited.add(id(neighbor))
-                    queue.append(neighbor)
+            def connected_to(part_a, part_b):
+                return part_b in adjacency.get(id(part_a), set())
 
-        # Add any parts not reached by BFS (disconnected within the group).
-        for part in parts:
-            if id(part) not in visited:
+            def io_side_score(part):
+                names = [n.upper() for n in node._net_names_of(part)]
+                right_tokens = ("OUT", "TX", "MISO", "SCL", "CS", "PWM")
+                left_tokens = ("IN", "RX", "MOSI", "SDA", "ADC", "SENSE")
+                right = sum(any(token in n for token in right_tokens) for n in names)
+                left = sum(any(token in n for token in left_tokens) for n in names)
+                return right - left
+
+            remaining = [p for p in real_parts if p is not main_part]
+            power_parts = [p for p in remaining if roles[p] == "power"]
+            decoupling_parts = [p for p in remaining if roles[p] == "decoupling"]
+            connector_parts = [p for p in remaining if roles[p] == "connector"]
+            passive_parts = [p for p in remaining if roles[p] == "passive"]
+            other_parts = [p for p in remaining if p not in (set(power_parts) | set(decoupling_parts) | set(connector_parts) | set(passive_parts))]
+
+            power_parts = sorted(power_parts, key=node._part_ref_key)
+            connector_parts = sorted(connector_parts, key=node._part_ref_key)
+            passive_parts = sorted(passive_parts, key=node._part_ref_key)
+            other_parts = sorted(other_parts, key=node._part_ref_key)
+
+            left_connectors = []
+            right_connectors = []
+            for part in connector_parts:
+                if io_side_score(part) > 0:
+                    right_connectors.append(part)
+                else:
+                    left_connectors.append(part)
+
+            decoup_near_main = []
+            decoup_power = []
+            for part in sorted(decoupling_parts, key=node._part_ref_key):
+                if connected_to(part, main_part):
+                    decoup_near_main.append(part)
+                else:
+                    decoup_power.append(part)
+
+            # 主器件放中心，其它器件按角色分区，优先形成人读图习惯的左右/上下结构。
+            top_y = main_bbox.min.y - (BLK_INT_PAD + 2 * GRID)
+            left_x = main_bbox.min.x - (3 * BLK_INT_PAD)
+            right_x = main_bbox.max.x + (2 * BLK_INT_PAD)
+            bottom_y = main_bbox.max.y + (2 * BLK_INT_PAD)
+
+            top_row = power_parts + decoup_power
+            if top_row:
+                node._place_row(top_row, left_x, top_y, direction=1, gap=BLK_INT_PAD)
+
+            if decoup_near_main:
+                node._place_row(
+                    decoup_near_main,
+                    main_bbox.min.x,
+                    main_bbox.min.y - BLK_INT_PAD,
+                    direction=1,
+                    gap=GRID,
+                )
+
+            if left_connectors:
+                y = main_bbox.min.y
+                for part in left_connectors:
+                    bbox = part.place_bbox
+                    part.tx = Tx().move(Point(left_x - bbox.w, y))
+                    y += max(bbox.h, GRID) + BLK_INT_PAD
+
+            if right_connectors:
+                y = main_bbox.min.y
+                for part in right_connectors:
+                    part.tx = Tx().move(Point(right_x, y))
+                    y += max(part.place_bbox.h, GRID) + BLK_INT_PAD
+
+            passive_near = []
+            passive_far = []
+            for part in passive_parts:
+                if connected_to(part, main_part):
+                    passive_near.append(part)
+                else:
+                    passive_far.append(part)
+
+            if passive_near:
+                node._place_row(
+                    passive_near,
+                    main_bbox.max.x + BLK_INT_PAD,
+                    main_bbox.max.y + BLK_INT_PAD,
+                    direction=1,
+                    gap=BLK_INT_PAD,
+                )
+            if passive_far:
+                node._place_row(
+                    passive_far,
+                    main_bbox.min.x - BLK_INT_PAD,
+                    bottom_y,
+                    direction=1,
+                    gap=BLK_INT_PAD,
+                )
+
+            if other_parts:
+                node._place_row(other_parts, right_x, bottom_y, direction=1, gap=BLK_INT_PAD)
+
+            # 在启发式分区摆放后做一次保守去重叠，避免局部角色区块互相压住。
+            for part in sorted(real_parts, key=node._part_ref_key):
+                for _ in range(30):
+                    bbox = part.place_bbox * part.tx
+                    overlap = False
+                    for other in real_parts:
+                        if other is part:
+                            continue
+                        other_bbox = other.place_bbox * other.tx
+                        if bbox.intersects(other_bbox):
+                            part.tx *= Tx(dx=0, dy=BLK_INT_PAD)
+                            overlap = True
+                            break
+                    if not overlap:
+                        break
+
+            for part in real_parts:
+                snap_to_grid(part)
+        else:
+            # Pick seed: part with most connections.
+            seed = max(real_parts, key=lambda p: len(adjacency.get(id(p), set())))
+
+            # BFS traversal, placing in rows.
+            visited = {id(seed)}
+            queue = deque([seed])
+            order = []
+            while queue:
+                part = queue.popleft()
                 order.append(part)
+                for neighbor in adjacency.get(id(part), set()):
+                    if id(neighbor) not in visited:
+                        visited.add(id(neighbor))
+                        queue.append(neighbor)
 
-        # Compute total area to determine max row width.
-        total_area = sum(
-            max(p.place_bbox.w, 1) * max(p.place_bbox.h, 1) for p in order
-        )
-        max_row_width = math.sqrt(total_area) * 2
+            # Add any parts not reached by BFS (disconnected within the group).
+            for part in sorted(real_parts, key=node._part_ref_key):
+                if id(part) not in visited:
+                    order.append(part)
 
-        # Place parts in rows.
-        col_x = 0
-        row_y = 0
-        row_max_h = 0
-        for part in order:
-            w = max(part.place_bbox.w, 100)
-            h = max(part.place_bbox.h, 100)
+            # Compute total area to determine max row width.
+            total_area = sum(
+                max(p.place_bbox.w, 1) * max(p.place_bbox.h, 1) for p in order
+            )
+            max_row_width = math.sqrt(total_area) * 2
 
-            if col_x > 0 and col_x + w > max_row_width:
-                # Start new row.
-                row_y += row_max_h + BLK_INT_PAD
-                col_x = 0
-                row_max_h = 0
+            # Place parts in rows.
+            col_x = 0
+            row_y = 0
+            row_max_h = 0
+            for part in order:
+                w = max(part.place_bbox.w, 100)
+                h = max(part.place_bbox.h, 100)
 
-            part.tx = Tx().move(Point(col_x, row_y))
-            col_x += w + BLK_INT_PAD
-            row_max_h = max(row_max_h, h)
+                if col_x > 0 and col_x + w > max_row_width:
+                    # Start new row.
+                    row_y += row_max_h + BLK_INT_PAD
+                    col_x = 0
+                    row_max_h = 0
 
-        # Snap to grid.
-        for part in order:
-            snap_to_grid(part)
+                part.tx = Tx().move(Point(col_x, row_y))
+                col_x += w + BLK_INT_PAD
+                row_max_h = max(row_max_h, h)
 
-        # Place NetTerminals around the placed parts.
-        net_terminals = [p for p in parts if is_net_terminal(p)]
-        real_parts = [p for p in parts if not is_net_terminal(p)]
+            # Snap to grid.
+            for part in order:
+                snap_to_grid(part)
+
         if net_terminals:
             place_net_terminals(
                 net_terminals, real_parts, nets, total_part_force, **options
@@ -1309,10 +1568,61 @@ class Placer:
             # Abort if nothing to place.
             return
 
+        human_readable = options.get("human_readable", False)
+
         # For large numbers of floating parts, skip the O(n^2) similarity
         # computation and force-directed evolution. Just grid-place them.
         # This avoids the 100+ second penalty for 60+ identical decoupling caps.
         _FLOAT_GRID_THRESHOLD = 20
+        if human_readable:
+            add_placement_bboxes(parts)
+            role_buckets = defaultdict(list)
+            for part in parts:
+                role_buckets[node._classify_part_role(part)].append(part)
+
+            role_order = ["power", "decoupling", "passive", "ic", "connector", "other"]
+            y = 0
+            for role in role_order:
+                bucket = role_buckets.get(role, [])
+                if not bucket:
+                    continue
+
+                # 同类器件按 value/ref 稳定排序，避免每次生成顺序漂移。
+                if role == "passive":
+                    subtype = defaultdict(list)
+                    for part in bucket:
+                        ref = str(getattr(part, "ref", "") or "").upper()
+                        prefix = ref[:1]
+                        subtype[prefix].append(part)
+                    sub_order = ["R", "C", "L", "D", "Q", ""]
+                    for key in sub_order:
+                        sub_parts = subtype.get(key, [])
+                        if not sub_parts:
+                            continue
+                        sub_parts = sorted(
+                            sub_parts,
+                            key=lambda p: (
+                                str(getattr(p, "value", "") or "").lower(),
+                                node._part_ref_key(p),
+                            ),
+                        )
+                        row_bbox = node._place_row(sub_parts, 0, y, direction=1, gap=BLK_INT_PAD)
+                        y = row_bbox.max.y + BLK_INT_PAD
+                else:
+                    bucket = sorted(
+                        bucket,
+                        key=lambda p: (
+                            str(getattr(p, "value", "") or "").lower(),
+                            node._part_ref_key(p),
+                        ),
+                    )
+                    row_bbox = node._place_row(bucket, 0, y, direction=1, gap=BLK_INT_PAD)
+                    y = row_bbox.max.y + BLK_INT_PAD
+
+            for part in parts:
+                snap_to_grid(part)
+            return
+
         if len(parts) > _FLOAT_GRID_THRESHOLD and options.get("auto_stub", False):
             add_placement_bboxes(parts)
             # Simple grid layout for floating parts.
@@ -1500,16 +1810,54 @@ class Placer:
             # Abort if nothing to place.
             return
 
+        human_readable = options.get("human_readable", False)
+
         # For large block counts, use a simple grid layout instead of
         # O(n²) force-directed placement.
         if len(part_blocks) > node._ROW_PLACE_THRESHOLD:
-            cols = max(1, int(len(part_blocks) ** 0.5))
-            for i, blk in enumerate(part_blocks):
-                row, col = divmod(i, cols)
-                w = blk.place_bbox.w if blk.place_bbox.w > 0 else 500
-                h = blk.place_bbox.h if blk.place_bbox.h > 0 else 500
-                blk.tx = Tx().move(Point(col * (w + BLK_EXT_PAD), row * (h + BLK_EXT_PAD)))
-                snap_to_grid(blk)
+            if human_readable:
+                # 分区摆放块对象，让主连通块在中部、浮动块在下方、子层级块在右侧，增强阅读方向感。
+                def blk_key(blk):
+                    src = blk.src
+                    ref = str(getattr(src, "ref", getattr(src, "name", "")) or "")
+                    return (blk.tag, -(blk.place_bbox.w * blk.place_bbox.h), ref.lower())
+
+                connected_blks = sorted([b for b in part_blocks if b.tag == 1], key=blk_key)
+                floating_blks = sorted([b for b in part_blocks if b.tag == 2], key=blk_key)
+                child_blks = sorted([b for b in part_blocks if b.tag in (3, 4)], key=blk_key)
+
+                y = 0
+                if connected_blks:
+                    row_bbox = node._place_row(
+                        connected_blks, 0, y, direction=1, gap=BLK_EXT_PAD
+                    )
+                    y = row_bbox.max.y + BLK_EXT_PAD
+
+                if floating_blks:
+                    row_bbox = node._place_row(
+                        floating_blks, 0, y + BLK_EXT_PAD, direction=1, gap=BLK_EXT_PAD
+                    )
+                    y = row_bbox.max.y + BLK_EXT_PAD
+
+                if child_blks:
+                    right_x = 0
+                    if connected_blks or floating_blks:
+                        total_bbox = get_enclosing_bbox(connected_blks + floating_blks)
+                        right_x = total_bbox.max.x + BLK_EXT_PAD
+                    node._place_row(
+                        child_blks, right_x, BLK_EXT_PAD, direction=1, gap=BLK_EXT_PAD
+                    )
+
+                for blk in part_blocks:
+                    snap_to_grid(blk)
+            else:
+                cols = max(1, int(len(part_blocks) ** 0.5))
+                for i, blk in enumerate(part_blocks):
+                    row, col = divmod(i, cols)
+                    w = blk.place_bbox.w if blk.place_bbox.w > 0 else 500
+                    h = blk.place_bbox.h if blk.place_bbox.h > 0 else 500
+                    blk.tx = Tx().move(Point(col * (w + BLK_EXT_PAD), row * (h + BLK_EXT_PAD)))
+                    snap_to_grid(blk)
 
             # Apply the placement moves of the part blocks to their underlying sources.
             for blk in part_blocks:
@@ -1638,6 +1986,7 @@ class Placer:
             return
 
         max_group = options.get("auto_stub_max_group", 20)
+        human_readable = options.get("human_readable", False)
 
         for group in groups:
             if len(group) <= max_group:
@@ -1657,11 +2006,16 @@ class Placer:
                     id(p.part) for p in net.pins if id(p.part) in group_ids
                 }
                 if 2 <= len(net_parts) <= 4:
-                    chain_nets.append((len(net_parts), net))
+                    name = str(getattr(net, "name", "") or "")
+                    is_power = node._is_power_net_name(name)
+                    chain_nets.append((len(net_parts), 0 if is_power else 1, name.lower(), net))
 
-            # Sort by fanout (prefer stubbing 2-pin nets first).
-            chain_nets.sort(key=lambda x: x[0])
-            chain_nets = [net for _, net in chain_nets]
+            if human_readable:
+                # 人类可读模式优先 stub 电源/跨域感强的连线，尽量保留近距离两点线条的连线感。
+                chain_nets.sort(key=lambda x: (x[1], -x[0], x[2]))
+            else:
+                chain_nets.sort(key=lambda x: x[0])
+            chain_nets = [net for _, _, _, net in chain_nets]
 
             if not chain_nets:
                 continue
@@ -1674,18 +2028,26 @@ class Placer:
             # Stub evenly-spaced chain nets to split the group into chunks
             # of ~max_group parts. We need ceil(len/max)-1 cuts minimum.
             n_cuts = max(1, (len(group) + max_group - 1) // max_group)
-            step = max(1, len(chain_nets) // (n_cuts + 1))
-            if step < 1:
-                step = 1
             stubbed = 0
-
-            for i in range(step, len(chain_nets), step):
-                net = chain_nets[i]
-                net._stub = True
-                net._stub_explicit = False
-                for p in net.get_pins():
-                    p.stub = True
-                stubbed += 1
+            if human_readable:
+                # 保守地只打必要数量的 stub，避免“全图都是标签”导致可读性下降。
+                for net in chain_nets[:n_cuts]:
+                    net._stub = True
+                    net._stub_explicit = False
+                    for p in net.get_pins():
+                        p.stub = True
+                    stubbed += 1
+            else:
+                step = max(1, len(chain_nets) // (n_cuts + 1))
+                if step < 1:
+                    step = 1
+                for i in range(step, len(chain_nets), step):
+                    net = chain_nets[i]
+                    net._stub = True
+                    net._stub_explicit = False
+                    for p in net.get_pins():
+                        p.stub = True
+                    stubbed += 1
 
             active_logger.info(
                 f"  [auto_stub_large_groups] Stubbed {stubbed} nets"
@@ -1708,7 +2070,11 @@ class Placer:
         this_module = sys.modules[__name__]
         this_module.__dict__.update(tool_modules[tool].constants.__dict__)
 
-        random.seed(options.get("seed"))
+        seed = options.get("seed")
+        if options.get("human_readable", False) and seed is None:
+            # 人类可读模式默认固定随机种子，保证同一输入的输出稳定可回归。
+            seed = 0
+        random.seed(seed)
 
         # Store the starting attributes of the node's parts, pins, and nets.
         node.attrs = node.get_attrs()

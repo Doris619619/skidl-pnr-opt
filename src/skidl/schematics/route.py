@@ -1314,7 +1314,12 @@ class SwitchBox:
                     break
                 # Get the box which will be added if expansion occurs.
                 # Every face borders two switchboxes, so the adjacent box is the other one.
-                adj_box = (box_face.switchboxes - {box}).pop()
+                # 人类可读布局等情况下邻接集偶发为空，pop 会 KeyError；保守放弃该方向的本次生长。
+                adjacent = box_face.switchboxes - {box}
+                if not adjacent:
+                    active_directions.remove(direction)
+                    break
+                adj_box = min(adjacent, key=id)
                 if adj_box not in switchboxes:
                     # This box cannot be added, so expansion in this direction is blocked.
                     active_directions.remove(direction)
@@ -1322,10 +1327,20 @@ class SwitchBox:
             else:
                 # All the switchboxes along the growth side are available for expansion,
                 # so replace the current boxes in the growth side with these new ones.
+                adjacent_pairs = []
+                ok_expand = True
                 for i, box in enumerate(box_list[:]):
                     # Get the adjacent box for the current box on the growth side.
                     box_face = box.face_list[direction]
-                    adj_box = (box_face.switchboxes - {box}).pop()
+                    adjacent = box_face.switchboxes - {box}
+                    if not adjacent:
+                        ok_expand = False
+                        break
+                    adjacent_pairs.append((i, min(adjacent, key=id)))
+                if not ok_expand:
+                    active_directions.remove(direction)
+                    continue
+                for i, adj_box in adjacent_pairs:
                     # Replace the current box with the new box from the expansion.
                     box_list[i] = adj_box
                     # Remove the newly added box from the list of available boxes for growth.
@@ -2188,6 +2203,23 @@ class Router:
                 face.set_capacity()
 
     def global_router(node, nets):
+        human_readable = False
+        try:
+            human_readable = node._route_options.get("human_readable", False)
+        except AttributeError:
+            pass
+
+        def stable_face_key(face):
+            """Create a deterministic key for selecting a face."""
+            return (
+                getattr(face.track, "orientation", 0),
+                getattr(face.track, "coord", 0),
+                getattr(face.beg, "coord", 0),
+                getattr(face.end, "coord", 0),
+                len(getattr(face, "pins", [])),
+                len(getattr(face, "terminals", [])),
+            )
+
         """Globally route a list of nets from face to face.
 
         Args:
@@ -2336,8 +2368,12 @@ class Router:
             net_pin_faces = {pin.face for pin in node.get_internal_pins(net)}
             start_faces = set(net_pin_faces)
 
-            # Select a random start face and look for a route to *any* of the other start faces.
-            start_face = random.choice(list(start_faces))
+            # 人类可读模式优先稳定起点，减少重复运行时路径抖动。
+            if human_readable:
+                start_face = sorted(start_faces, key=stable_face_key)[0]
+            else:
+                # Select a random start face and look for a route to *any* of the other start faces.
+                start_face = random.choice(list(start_faces))
             start_faces.discard(start_face)
             stop_faces = set(start_faces)
             initial_route = rt_srch(start_face, stop_faces)
@@ -2440,6 +2476,12 @@ class Router:
 
     def cleanup_wires(node):
         """Try to make wire segments look prettier."""
+
+        human_readable = False
+        try:
+            human_readable = node._route_options.get("human_readable", False)
+        except AttributeError:
+            pass
 
         def order_seg_points(segments):
             """Order endpoints in a horizontal or vertical segment."""
@@ -2919,8 +2961,19 @@ class Router:
                         # Send the jog that was found.
                         yield list(jog_segs), list(start_stop_pts)
 
-            # Shuffle segments to vary the order of detected jogs.
-            random.shuffle(segments)
+            # 人类可读模式关闭洗牌，优先保证输出可重复与可比对。
+            if human_readable:
+                segments.sort(
+                    key=lambda seg: (
+                        min(seg.p1.x, seg.p2.x),
+                        min(seg.p1.y, seg.p2.y),
+                        max(seg.p1.x, seg.p2.x),
+                        max(seg.p1.y, seg.p2.y),
+                    )
+                )
+            else:
+                # Shuffle segments to vary the order of detected jogs.
+                random.shuffle(segments)
 
             # Get iterator for jogs.
             jogs = get_jogs(segments)
@@ -2942,8 +2995,12 @@ class Router:
                 # move horizontally from p1 and then vertically to p3.
                 p2s = [Point(p1.x, p3.y), Point(p3.x, p1.y)]
 
-                # Shuffle the routing points so the applied correction isn't always the same orientation.
-                random.shuffle(p2s)
+                # 人类可读模式固定尝试顺序，避免同网表多次输出方向不一致。
+                if human_readable:
+                    p2s = sorted(p2s, key=lambda p: (p.x, p.y))
+                else:
+                    # Shuffle the routing points so the applied correction isn't always the same orientation.
+                    random.shuffle(p2s)
 
                 # Check each routing point to see if it leads to a valid routing.
                 for p2 in p2s:
@@ -3051,6 +3108,58 @@ class Router:
                 # Update the node net's wire with the cleaned version.
                 node.wires[net] = segments
 
+        if human_readable:
+            # 在通用清理后追加保守的人类化处理：只做不改变连通性的局部简化。
+            node.humanize_wires()
+
+    def humanize_wires(node):
+        """Apply conservative post-cleanup wiring simplifications."""
+
+        def seg_key(seg):
+            return (
+                min(seg.p1.x, seg.p2.x),
+                min(seg.p1.y, seg.p2.y),
+                max(seg.p1.x, seg.p2.x),
+                max(seg.p1.y, seg.p2.y),
+            )
+
+        # 使用 part bbox 作为硬障碍，避免“美化”导致导线穿过器件。
+        part_bboxes = [p.bbox * p.tx for p in node.parts]
+
+        for net, segments in node.wires.items():
+            cleaned = []
+            for seg in segments:
+                if seg.p1 == seg.p2:
+                    continue
+                if seg.p2 < seg.p1:
+                    seg = Segment(seg.p2, seg.p1)
+                cleaned.append(seg)
+
+            # 先按几何顺序稳定排序，便于后续重复运行获得相同结果。
+            cleaned = sorted(cleaned, key=seg_key)
+
+            # 删除非常短的 stub，保留连接主干的必要线段。
+            # Segment 无 length 属性；用端点差的 magnitude（正交线段即几何长度）。
+            stub_thresh = max(1, GRID // 2)
+            trimmed = []
+            for seg in cleaned:
+                seg_len = (seg.p2 - seg.p1).magnitude
+                if seg_len < stub_thresh:
+                    pt1_refs = 0
+                    pt2_refs = 0
+                    for other in cleaned:
+                        if other is seg:
+                            continue
+                        if seg.p1 in (other.p1, other.p2):
+                            pt1_refs += 1
+                        if seg.p2 in (other.p1, other.p2):
+                            pt2_refs += 1
+                    if pt1_refs + pt2_refs <= 1:
+                        continue
+                trimmed.append(seg)
+
+            node.wires[net] = trimmed
+
     def add_junctions(node):
         """Add X & T-junctions where wire segments in the same net meet."""
 
@@ -3130,7 +3239,12 @@ class Router:
         this_module = sys.modules[__name__]
         this_module.__dict__.update(tool_modules[tool].constants.__dict__)
 
-        random.seed(options.get("seed"))
+        seed = options.get("seed")
+        if options.get("human_readable", False) and seed is None:
+            # 人类可读模式默认固定随机种子，保证同输入多次运行可重现。
+            seed = 0
+        random.seed(seed)
+        node._route_options = options
 
         # Remove any stuff leftover from a previous place & route run.
         node.rmv_routing_stuff()
@@ -3229,8 +3343,10 @@ class Router:
 
             # Remove any stuff leftover from this place & route run.
             node.rmv_routing_stuff()
+            rmv_attr(node, ("_route_options",))
 
         except RoutingFailure:
             # Remove any stuff leftover from this place & route run.
             node.rmv_routing_stuff()
+            rmv_attr(node, ("_route_options",))
             raise RoutingFailure
