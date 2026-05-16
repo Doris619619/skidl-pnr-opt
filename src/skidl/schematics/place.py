@@ -1274,6 +1274,177 @@ class Placer:
 
         return BBox(Point(min_x, min_y), Point(max_x, max_y))
 
+    def _placement_ctr(node, part):
+        """返回器件放置 bbox 的中心，供几何对齐后处理使用。"""
+        return (part.place_bbox * part.tx).ctr
+
+    def _set_part_center_y(node, part, target_y):
+        """仅沿 Y 平移器件，使中心落在 target_y（吸附到网格）。"""
+        ctr = node._placement_ctr(part)
+        snapped_y = Point(ctr.x, target_y).snap(GRID).y
+        dy = snapped_y - ctr.y
+        if dy:
+            part.tx *= Tx(dx=0, dy=dy)
+
+    def _set_part_center_x(node, part, target_x):
+        """仅沿 X 平移器件，使中心落在 target_x（吸附到网格）。"""
+        ctr = node._placement_ctr(part)
+        snapped_x = Point(target_x, ctr.y).snap(GRID).x
+        dx = snapped_x - ctr.x
+        if dx:
+            part.tx *= Tx(dx=dx, dy=0)
+
+    def _identify_trunk_parts(node, main_part, adjacency, roles):
+        """识别水平主干候选：主器件 + 已在同一水平带内的近邻。
+
+        不把“所有直接邻居”都拉进主干，避免小电路（如 LED 链）被压成一行后
+        引脚落在同一路由坐标上引发 TerminalClash。
+        """
+        trunk = {main_part}
+        main_ctr = node._placement_ctr(main_part)
+        main_h = max(main_part.place_bbox.h, GRID)
+        neighbors = sorted(
+            adjacency.get(id(main_part), set()), key=node._part_ref_key
+        )
+        for neighbor in neighbors:
+            if roles.get(neighbor) in ("decoupling", "power"):
+                continue
+            n_ctr = node._placement_ctr(neighbor)
+            tol = max(main_h, max(neighbor.place_bbox.h, GRID))
+            if abs(n_ctr.y - main_ctr.y) <= tol:
+                trunk.add(neighbor)
+        return trunk
+
+    def _nudge_part_if_clear(node, part, parts, dx, dy):
+        """平移器件；若与组内其它 place_bbox 相交则回滚。"""
+        if not dx and not dy:
+            return False
+        old_tx = copy(part.tx)
+        part.tx *= Tx(dx=dx, dy=dy)
+        bbox = part.place_bbox * part.tx
+        for other in parts:
+            if other is part:
+                continue
+            if bbox.intersects(other.place_bbox * other.tx):
+                part.tx = old_tx
+                return False
+        return True
+
+    def _set_part_center_y_safe(node, part, parts, target_y):
+        """对齐 Y；若会与其它器件重叠则跳过（保持原位置）。"""
+        ctr = node._placement_ctr(part)
+        snapped_y = Point(ctr.x, target_y).snap(GRID).y
+        dy = snapped_y - ctr.y
+        if dy:
+            node._nudge_part_if_clear(part, parts, 0, dy)
+
+    def _align_connected_geometry(node, parts, adjacency, roles, main_part):
+        """human_readable 专用：启发式摆放后的保守几何对齐后处理。
+
+        主干共线、上下支路分层、左右近似对称，末尾做有限轮垂直去重叠。
+        不移动主器件锚点，避免打乱分区布局的“中心”语义。
+        """
+        if not parts or main_part is None or len(parts) < 2:
+            return
+
+        main_ctr = node._placement_ctr(main_part)
+        main_y = main_ctr.y
+        main_x = main_ctr.x
+
+        trunk = node._identify_trunk_parts(main_part, adjacency, roles)
+
+        # 第 1 步：主干器件共线（水平主干，统一 Y；主器件本身不动）
+        for part in sorted(trunk - {main_part}, key=node._part_ref_key):
+            node._set_part_center_y_safe(part, parts, main_y)
+
+        max_h = max((max(p.place_bbox.h, GRID) for p in parts), default=GRID)
+        branch_gap = max(BLK_INT_PAD + GRID, max_h + GRID)
+        y_top = main_y - branch_gap
+        y_bottom = main_y + branch_gap
+
+        # 第 2 步：非主干器件按当前相对主干的上下关系分层
+        # 电源/去耦/连接器保留分区启发式的位置，避免把左侧纵向连接器压成一行。
+        layer_skip_roles = ("connector", "power", "decoupling")
+        upper = []
+        lower = []
+        for part in sorted(parts, key=node._part_ref_key):
+            if part in trunk:
+                continue
+            if roles.get(part) in layer_skip_roles:
+                continue
+            ctr = node._placement_ctr(part)
+            if ctr.y < main_y - GRID * 0.25:
+                upper.append(part)
+            elif ctr.y > main_y + GRID * 0.25:
+                lower.append(part)
+            else:
+                # 与主干同高带的器件：按 X 相对主器件分到上/下层，避免全挤在主干上
+                if ctr.x <= main_x:
+                    upper.append(part)
+                else:
+                    lower.append(part)
+
+        for part in upper:
+            node._set_part_center_y_safe(part, parts, y_top)
+        for part in lower:
+            node._set_part_center_y_safe(part, parts, y_bottom)
+
+        # 第 3 步：左右对称——同 role、相近连接度的成对器件仅对齐 Y（不改 X，避免引脚共线）
+        branch_parts = [p for p in parts if p not in trunk]
+        left_by_sig = defaultdict(list)
+        right_by_sig = defaultdict(list)
+        for part in branch_parts:
+            ctr = node._placement_ctr(part)
+            degree = len(adjacency.get(id(part), set()))
+            sig = (roles.get(part), degree)
+            if ctr.x < main_x - GRID:
+                left_by_sig[sig].append(part)
+            elif ctr.x > main_x + GRID:
+                right_by_sig[sig].append(part)
+
+        all_sigs = sorted(
+            set(left_by_sig.keys()) | set(right_by_sig.keys()),
+            key=lambda s: (s[0], s[1]),
+        )
+        for sig in all_sigs:
+            left_list = sorted(left_by_sig.get(sig, []), key=node._part_ref_key)
+            right_list = sorted(right_by_sig.get(sig, []), key=node._part_ref_key)
+            pair_count = min(len(left_list), len(right_list))
+            for i in range(pair_count):
+                lp = left_list[i]
+                rp = right_list[i]
+                l_ctr = node._placement_ctr(lp)
+                r_ctr = node._placement_ctr(rp)
+                avg_y = (l_ctr.y + r_ctr.y) / 2.0
+                node._set_part_center_y_safe(lp, parts, avg_y)
+                node._set_part_center_y_safe(rp, parts, avg_y)
+
+        # 第 4 步：保守去重叠——组内任意器件，先垂直再水平小步推开
+        for _ in range(25):
+            moved = False
+            for part in sorted(parts, key=node._part_ref_key):
+                bbox = part.place_bbox * part.tx
+                for other in parts:
+                    if other is part:
+                        continue
+                    other_bbox = other.place_bbox * other.tx
+                    if not bbox.intersects(other_bbox):
+                        continue
+                    ctr = node._placement_ctr(part)
+                    other_ctr = node._placement_ctr(other)
+                    dy = BLK_INT_PAD if ctr.y <= other_ctr.y else -BLK_INT_PAD
+                    if node._nudge_part_if_clear(part, parts, 0, dy):
+                        moved = True
+                        break
+                    dx = BLK_INT_PAD if ctr.x <= other_ctr.x else -BLK_INT_PAD
+                    if node._nudge_part_if_clear(part, parts, dx, 0):
+                        moved = True
+                        break
+                if moved:
+                    break
+            if not moved:
+                break
+
     def place_connected_parts_rowbased(node, parts, nets, **options):
         """Place connected parts using a BFS row-based layout (O(n)).
 
@@ -1420,21 +1591,10 @@ class Placer:
             if other_parts:
                 node._place_row(other_parts, right_x, bottom_y, direction=1, gap=BLK_INT_PAD)
 
-            # 在启发式分区摆放后做一次保守去重叠，避免局部角色区块互相压住。
-            for part in sorted(real_parts, key=node._part_ref_key):
-                for _ in range(30):
-                    bbox = part.place_bbox * part.tx
-                    overlap = False
-                    for other in real_parts:
-                        if other is part:
-                            continue
-                        other_bbox = other.place_bbox * other.tx
-                        if bbox.intersects(other_bbox):
-                            part.tx *= Tx(dx=0, dy=BLK_INT_PAD)
-                            overlap = True
-                            break
-                    if not overlap:
-                        break
+            # 分区摆放后再做几何对齐（主干共线、支路分层、左右对称、去重叠）。
+            node._align_connected_geometry(
+                real_parts, adjacency, roles, main_part
+            )
 
             for part in real_parts:
                 snap_to_grid(part)
@@ -1545,6 +1705,20 @@ class Placer:
             if adjust_orientations(real_parts, **options):
                 # Some part orientations were changed, so re-do placement.
                 evolve_placement([], real_parts, nets, total_part_force, **options)
+
+        if options.get("human_readable", False) and len(real_parts) >= 2:
+            from skidl.schematics.place_small_group import beautify_small_connected_group
+
+            # 小组力导向之后做弱美化（独立模块），避免过强共线引发 routing 冲突。
+            beautify_small_connected_group(
+                real_parts,
+                classify_role=node._classify_part_role,
+                part_ref_key=node._part_ref_key,
+                grid=GRID,
+                blk_int_pad=BLK_INT_PAD,
+            )
+            for part in real_parts:
+                snap_to_grid(part)
 
         # Place NetTerminals after all the other parts.
         place_net_terminals(
