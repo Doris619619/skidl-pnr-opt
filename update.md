@@ -129,3 +129,124 @@ node.route(..., human_readable=True)
 ### 3. 验收
 
 - 在 `ski2` 环境下对 `5micro_3.net` 重新 `convert_netlist` 后运行 `5micro_3_skidl.py`，**`human_readable=True`** 应能完成 schematic 生成（或进入既有 auto_stub 回退），且 `.kicad_sch` 位于 **`kicad_generated_h/`**。
+
+---
+
+## 2026-05-16 更新：connected group 几何对齐后处理（仅 `human_readable=True`）
+
+### 目的
+
+在既有「主器件 + 角色分区」启发式摆放之后，补一层**保守的几何整理**，缓解「器件聚在一起但不在一条线上」的问题：主干共线、上下支路分层、左右近似对称，且不破坏默认可用性。
+
+### 修改文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/skidl/schematics/place.py` | 新增对齐后处理及调用点 |
+| `update.md` | 本记录 |
+
+**未改** `route.py`（本步仅 placement 后处理）。
+
+### 新增 / 调整函数（`Placer` 内）
+
+| 函数 | 作用 |
+|------|------|
+| `_placement_ctr(part)` | 取 `place_bbox * tx` 中心，供对齐计算 |
+| `_set_part_center_y` / `_set_part_center_x` | 单轴平移并吸附 `GRID` |
+| `_identify_trunk_parts` | 主器件 + 非 `power`/`decoupling` 的直接邻居 → 主干候选 |
+| `_align_connected_geometry` | 四步后处理：主干共 Y → 上下支路 `y_top`/`y_bottom` → 同 role/度数成对镜像 → 最多 25 轮支路垂直去重叠 |
+
+### 调用时机
+
+- **仅** **`place_connected_parts_rowbased`** 且 `human_readable=True`：分区摆放完成后、`snap_to_grid` 之前调用。
+- **不**对 `place_connected_parts` 小组（&lt;20 器件，力导向）调用——例如 `4micro2`（6 器件）若强行对齐会把多颗 LED 压到同一水平线，路由 `coalesce` 时出现 `TerminalClashException`。
+
+### 2026-05-16 修补（`TerminalClash`）
+
+| 调整 | 原因 |
+|------|------|
+| 取消小组力导向路径上的对齐 | `4micro2` 等 &lt;20 器件电路不走 rowbased，对齐反而破坏力导向结果 |
+| 主干仅含**已在同一水平带**的近邻 | 避免“所有直接邻居”共 Y |
+| 支路/对称 Y 对齐前做**重叠检测**，冲突则跳过 | 不制造 bbox 重叠 |
+| 对称只统一 **Y**，不再镜像 **X** | 避免引脚落到同一路由坐标 |
+| 去重叠对**全组**开放，必要时水平微移 | 主干之间也能拉开 |
+
+### 为什么这样改
+
+- 分区启发式已决定「谁在上/下/左/右」，但**未强制几何共线**；后处理只调中心坐标，不动主器件锚点，改动面小、可回滚。
+- 主干识别复用 `_classify_part_role` 与邻接图，避免随机选链；排序统一用 `_part_ref_key`。
+- `branch_gap` 由 `max(place_bbox.h)`、`BLK_INT_PAD`、`GRID` 推导，避免写死过激间距。
+- 对称仅对「同 role + 同连接度」且分居主干两侧的支路器件成对处理，避免对单一 case 硬编码。
+
+### 默认行为
+
+- **`human_readable=False`（默认）**：**不变**；不调用 `_align_connected_geometry`。
+- **`human_readable=True`**：仅上述 connected parts 路径多一步几何整理。
+
+### 风险与限制
+
+- 第一版**优先水平主干**（统一 Y）；竖向主干未单独识别。
+- `power` / `decoupling` / `connector` 不参与上下支路 Y 吸附，保留分区启发式位置（避免左侧纵向连接器被压成一行）；不参与主干共线。
+- 对称与分层是**启发式近似**，复杂拓扑（多分叉、非两侧对称）只能做到「更整齐」，非最优布局。
+- 去重叠仅沿 Y 小步推开支路器件，若 X 方向严重重叠可能需后续路由/人工微调。
+- NetTerminal 在对齐**之后**再 `place_net_terminals`，避免终端标签拉动整体几何。
+
+### 自检
+
+- `python -m compileall src/skidl/schematics/place.py` 通过。
+
+---
+
+## 2026-05-16 更新：small connected group 弱美化（新文件）
+
+### 为什么 small 组不能照搬大组强对齐
+
+- 小组（`real_count <= _ROW_PLACE_THRESHOLD`，默认 20）走 **`place_connected_parts` 力导向**，拓扑已由弹簧布局拉开。
+- 大组 rowbased 路径上的 `_align_connected_geometry`（主干共线、上下分层、成对 Y 统一）适合**分区启发式之后**的结构化整理，**不适合**直接套在力导向结果上：容易把多颗器件强压到同一水平带，引脚在路由 grid 上共位，触发 `TerminalClashException`（如 `4micro2`）。
+
+### 为什么要拆到新文件
+
+- 避免 `place.py` 继续堆叠后处理逻辑；**大组强对齐留在 `place.py`**，**小组弱美化独立维护**。
+- 便于单独回滚、测试与阅读。
+
+### 新文件与入口
+
+| 项 | 值 |
+|----|-----|
+| 新文件 | `src/skidl/schematics/place_small_group.py` |
+| 入口函数 | `beautify_small_connected_group(...)` |
+
+### `place.py` 集成（最小改动）
+
+在 `place_connected_parts` 中，仅当 **`human_readable=True`** 且 **`real_count <= _ROW_PLACE_THRESHOLD`**（即未进入 rowbased）时：
+
+1. `evolve_placement`（及可选 `rotate_parts` 重跑）之后  
+2. `place_net_terminals` 之前  
+
+调用 `beautify_small_connected_group`，再对 real parts `snap_to_grid`。
+
+大组 rowbased + `_align_connected_geometry` **不变**。
+
+### 核心策略（弱规则 / 去抖）
+
+1. **方向**：组 bbox 宽 ≥ 高 → 偏横向，仅做 **Y 向**微调；纵向小图第一版不动。  
+2. **水平带分簇**：中心 Y 相差 ≤ `2 * GRID` 的器件划为一带；**仅对 ≥2 颗的带**做吸附。  
+3. **弱吸附**：目标 Y 为带内中位数并 snap；单颗移动量 ≤ `2 * GRID`；移动前/后做风险检查。  
+4. **可选 pair**：同 role 或同 ref 前缀、尺寸接近、分居中线两侧且 Y 已很近 → 仅轻微统一 Y（**无 X 镜像**）。  
+5. **去重叠**：最多 15 轮，优先沿 **X** 小步（因主调整为 Y），每步经安全检查。
+
+### 风险控制
+
+| 检查 | 说明 |
+|------|------|
+| bbox | 移动后与其它 real part 的 `place_bbox * tx` 相交则回滚 |
+| 引脚拥挤 | 已连接引脚的 `place_pt * tx`：不同 net 过近，或同轴距离 < `GRID` 则放弃移动 |
+| 幅度限制 | 只修“本来就接近”的（带内 / ≤ `2*GRID`），不重建拓扑 |
+| 单轴 | 横向图只主调 Y，不同时大幅改 X+Y |
+| 确定性 | 全程 `part_ref_key` 稳定排序，无随机 |
+
+### 默认行为
+
+- **`human_readable=False`（默认）**：**不变**，不调用 `beautify_small_connected_group`。  
+- **`human_readable=True` 且大组（>20）**：仍只走 rowbased + `_align_connected_geometry`，**不**走本模块。  
+- **`human_readable=True` 且小组（≤20）**：力导向后多一步弱美化。
