@@ -250,3 +250,77 @@ node.route(..., human_readable=True)
 - **`human_readable=False`（默认）**：**不变**，不调用 `beautify_small_connected_group`。  
 - **`human_readable=True` 且大组（>20）**：仍只走 rowbased + `_align_connected_geometry`，**不**走本模块。  
 - **`human_readable=True` 且小组（≤20）**：力导向后多一步弱美化。
+
+---
+
+## 2026-05-17 更新：human_readable 走线局部凸起压平（仅 `route.py`）
+
+### 修的是哪类问题
+
+- **现象**：small schematic / `human_readable=True` 时，走线里常出现「本可水平或垂直连过去，中间却多一小段台阶/凸起」——整体 route 没错，是 cleanup 未把局部可拉直的折线继续压平。
+- **不是 placement 问题**：器件位置与分区启发式无关；根因是 global/switchbox 路由优先连通、`create_nonpin_terminals()` 离散采样产生 dogleg，以及 `remove_jogs()` 主要针对标准三段 staircase/tophat，对「两平行主线 + 短 offset」类小 detour 覆盖不足。
+
+### 修改文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/skidl/schematics/route.py` | `cleanup_wires()` 内新增 `_straighten_local_detours()` |
+| `update.md` | 本记录 |
+
+**未改** `place.py`、`place_small_group.py`、global/switchbox 主路由算法。
+
+### 新增 pass：`_straighten_local_detours()`
+
+- **接入位置**：`cleanup_wires()` 中，每个 net 的 `remove_jogs()` **之后**；仍走原有 `merge_segments()` → `split_segments()` → `trim_stubs()` 循环，把结果收干净。
+- **模式**：**仅 `human_readable=True`** 时调用；默认 `human_readable=False` **不执行**，行为与改动前一致。
+- **策略（保守）**：
+  - 只处理 **H-V-H** / **V-H-V** 三元组，中间为短正交连接、两侧为同向主线；
+  - **情况 A**：两侧主线已共线 → 尝试用 **单段** 替代三段；
+  - **情况 B**：高度/宽度差 ≤ `max(GRID, 2*GRID)` → 尝试用 **L 形两段** 绕开中间台阶（角点顺序固定排序，保证确定性）；
+  - 每次至多改一处，改完返回由外层 while 继续 merge/split/trim（与 `remove_jogs` 相同节奏）。
+
+### 安全检查
+
+| 检查 | 说明 |
+|------|------|
+| 器件阻挡 | 新线段 bbox 不得与 `part_bboxes` 相交 |
+| 其它 net | 与同轨其它 net 线段 overlay 视为阻挡（与 `remove_jogs` 相同逻辑） |
+| pin | 中间拐角接 pin 则跳过；本 net 落在旧路径上的 pin 必须仍落在新路径上 |
+| 范围 | 仅小 detour（阈值 `max(GRID, 2*GRID)`），不重写整网几何 |
+
+### 默认行为
+
+- **`human_readable=False`（默认）**：**不变**；不调用 `_straighten_local_detours()`。
+- **`human_readable=True`**：在既有 `remove_jogs` + `humanize_wires` 流程中多一步局部压平，不改变路由主流程与 seed 策略。
+
+### 自检
+
+- `python -m compileall src/skidl/schematics/route.py` 通过。
+
+---
+
+## 2026-05-17 补充：junction-aware 局部凸起压平（仍仅 `route.py`）
+
+### 为什么原先纯三段检测不够
+
+- 第一版 `_straighten_local_detours()` 要求 `mid` 两端各**恰好**再连一条同 net segment（`len(others)==1`），等价于假设凸起是孤立 H-V-H / V-H-V 三元组。
+- 真实 cleanup 后 wire 往往已 `split_segments` / `add_junctions`，端点常是 **T 分叉、短 stub、同 net 多段共点**；小凸起两端已是 junction，旧逻辑直接 `continue`，凸起残留。
+
+### 为什么 junction-aware case 很常见
+
+- `remove_jogs` 与 merge/split 会在拐角处留下额外正交分支；global/switchbox 路由也不会保证 degree-2 拓扑。
+- 视觉上仍是「两平行主线 + 短 offset」，但拓扑上端点已挂分支，**不是** placement 问题，而是 cleanup 后图结构更复杂。
+
+### 本次扩展（不放宽安全检查）
+
+| 项 | 说明 |
+|----|------|
+| 主通路选取 | `main_legs_at()` 在 junction 上按方向筛平行侧腿，**确定性**排序后枚举 `(seg_a, seg_c)` 候选 |
+| 分支保留 | `attachment_points_ok()`：待移除段与**保留**同 net 段的交汇点必须仍落在新路径上；「有分支」不再一律跳过 |
+| 仍保守 | part / other-net obstruction、pin 落点、小 detour 阈值、每次只改一处、仅 `human_readable=True` — **均未放宽** |
+| 跨 net | 仍只读写当前 net 的 `segments`；其它 net 仅通过既有 `obstructed()` 同轨 overlay 检查 |
+
+### 默认行为
+
+- **`human_readable=False`**：**不变**。
+- **`human_readable=True`**：在既有 pass 上扩大可压平范围；不确定拓扑时 `try_apply` 失败即跳过。

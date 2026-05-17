@@ -3022,6 +3022,245 @@ class Router:
                         # Return updated segments and set stop flag to false because segments were modified.
                         return segments, False
 
+        def _straighten_local_detours(
+            net, segments, wires, net_bboxes, part_bboxes, net_pins
+        ):
+            """压平 human_readable 下 cleanup 仍残留的小凸起（保守，每次至多改一处）。
+
+            global/switchbox 路由优先保证连通，terminal 离散采样易留下 H-V-H / V-H-V
+            小台阶；remove_jogs 主要处理标准三段 jog，本 pass 专门收掉“几乎可拉直”的局部 detour。
+
+            cleanup 后同 net 常已有 junction / T 分叉 / 短 stub，端点未必 degree=2；
+            允许在端点挂同 net 分支，只要压平后分支连接点仍落在新路径上（junction-aware）。
+            """
+
+            def obstructed(segment):
+                """与 remove_jogs 一致：器件 bbox 或其它 net 同轨 overlay 视为阻挡。"""
+                segment_bbox = BBox(segment.p1, segment.p2)
+                for part_bbox in part_bboxes:
+                    if part_bbox.intersects(segment_bbox):
+                        return True
+                segment_bbox = segment_bbox.resize(Vector(2, 2))
+                for nt, nt_bbox in net_bboxes.items():
+                    if nt is net:
+                        continue
+                    if not segment_bbox.intersects(nt_bbox):
+                        continue
+                    for seg in wires[nt]:
+                        if segment.p1.x == segment.p2.x == seg.p1.x == seg.p2.x:
+                            if segment.p1.y <= seg.p2.y and segment.p2.y >= seg.p1.y:
+                                return True
+                        elif segment.p1.y == segment.p2.y == seg.p1.y == seg.p2.y:
+                            if segment.p1.x <= seg.p2.x and segment.p2.x >= seg.p1.x:
+                                return True
+                return False
+
+            def seg_key(seg):
+                return (
+                    min(seg.p1.x, seg.p2.x),
+                    min(seg.p1.y, seg.p2.y),
+                    max(seg.p1.x, seg.p2.x),
+                    max(seg.p1.y, seg.p2.y),
+                )
+
+            def is_horz(seg):
+                return seg.p1.y == seg.p2.y
+
+            def is_vert(seg):
+                return seg.p1.x == seg.p2.x
+
+            def far_end(seg, junction):
+                return seg.p2 if seg.p1 == junction else seg.p1
+
+            def pins_on_path(to_remove, new_segs):
+                """本 net 落在待移除路径上的 pin 必须仍落在新路径上。"""
+                for pt in net_pins:
+                    on_old = any(contains_pt(s, pt) for s in to_remove)
+                    if not on_old:
+                        continue
+                    if not any(contains_pt(s, pt) for s in new_segs):
+                        return False
+                return True
+
+            def attachment_points_ok(to_remove, new_segs):
+                """待移除段与保留分支的交汇点必须仍落在新路径上（junction-aware）。"""
+                to_remove_set = set(to_remove)
+                checked = set()
+                for seg in to_remove:
+                    for pt in (seg.p1, seg.p2):
+                        if pt in checked:
+                            continue
+                        checked.add(pt)
+                        at_pt = pt_segs[pt]
+                        has_remove = any(s in to_remove_set for s in at_pt)
+                        has_keep = any(s not in to_remove_set for s in at_pt)
+                        if not (has_remove and has_keep):
+                            continue
+                        if not any(contains_pt(ns, pt) for ns in new_segs):
+                            return False
+                return True
+
+            def try_apply(to_remove, new_segs):
+                order_seg_points(new_segs)
+                new_segs = [s for s in new_segs if s.p1 != s.p2]
+                if not new_segs:
+                    return False
+                if any(obstructed(s) for s in new_segs):
+                    return False
+                if not pins_on_path(to_remove, new_segs):
+                    return False
+                if not attachment_points_ok(to_remove, new_segs):
+                    return False
+                for seg in to_remove:
+                    segments.remove(seg)
+                segments.extend(
+                    Segment(copy.copy(s.p1), copy.copy(s.p2)) for s in new_segs
+                )
+                return True
+
+            def main_legs_at(junction, mid, parallel_horz):
+                """在 junction 上选取与 mid 组成凸起主通路的平行侧线段（确定性排序）。"""
+                others = [s for s in pt_segs[junction] if s is not mid]
+                if parallel_horz:
+                    legs = [s for s in others if is_horz(s)]
+                else:
+                    legs = [s for s in others if is_vert(s)]
+                return sorted(legs, key=seg_key)
+
+            # 只处理明显小凸起，避免大范围改线
+            detour_thresh = max(GRID, GRID * 2)
+
+            order_seg_points(segments)
+
+            pt_segs = defaultdict(list)
+            for seg in segments:
+                pt_segs[seg.p1].append(seg)
+                pt_segs[seg.p2].append(seg)
+
+            for mid in sorted(segments, key=seg_key):
+                # 中间拐角若接 pin，不移动拓扑（最保守）
+                if is_pin_pt(mid.p1) or is_pin_pt(mid.p2):
+                    continue
+
+                # ---------- H-V-H：两水平 夹 短竖 ----------
+                if is_vert(mid):
+                    legs_p1 = main_legs_at(mid.p1, mid, parallel_horz=True)
+                    legs_p2 = main_legs_at(mid.p2, mid, parallel_horz=True)
+                    if not legs_p1 or not legs_p2:
+                        continue
+
+                    j1, j2 = mid.p1, mid.p2
+                    detour_h = abs(j1.y - j2.y)
+                    if detour_h == 0 or detour_h > detour_thresh:
+                        continue
+                    if abs(mid.p1.y - mid.p2.y) > detour_thresh:
+                        continue
+
+                    for seg_a in legs_p1:
+                        for seg_c in legs_p2:
+                            to_remove = [seg_a, mid, seg_c]
+
+                            p_start = far_end(seg_a, j1)
+                            p_end = far_end(seg_c, j2)
+                            ya, yc = seg_a.p1.y, seg_c.p1.y
+
+                            # 情况 A：两水平已共线，可用单段替代整段小凸起
+                            if ya == yc:
+                                x_lo = min(p_start.x, p_end.x, j1.x, j2.x)
+                                x_hi = max(p_start.x, p_end.x, j1.x, j2.x)
+                                new_seg = Segment(
+                                    copy.copy(Point(x_lo, ya)),
+                                    copy.copy(Point(x_hi, ya)),
+                                )
+                                if try_apply(to_remove, [new_seg]):
+                                    return segments, False
+                                continue
+
+                            # 情况 B：小高度差，用 L 形绕开中间竖台阶
+                            corners = sorted(
+                                [
+                                    Point(p_end.x, p_start.y),
+                                    Point(p_start.x, p_end.y),
+                                ],
+                                key=lambda p: (p.x, p.y),
+                            )
+                            for corner in corners:
+                                new_segs = []
+                                if p_start != corner:
+                                    new_segs.append(
+                                        Segment(
+                                            copy.copy(p_start), copy.copy(corner)
+                                        )
+                                    )
+                                if corner != p_end:
+                                    new_segs.append(
+                                        Segment(
+                                            copy.copy(corner), copy.copy(p_end)
+                                        )
+                                    )
+                                if try_apply(to_remove, new_segs):
+                                    return segments, False
+                    continue
+
+                # ---------- V-H-V：两竖直 夹 短横 ----------
+                if is_horz(mid):
+                    legs_p1 = main_legs_at(mid.p1, mid, parallel_horz=False)
+                    legs_p2 = main_legs_at(mid.p2, mid, parallel_horz=False)
+                    if not legs_p1 or not legs_p2:
+                        continue
+
+                    j1, j2 = mid.p1, mid.p2
+                    detour_w = abs(j1.x - j2.x)
+                    if detour_w == 0 or detour_w > detour_thresh:
+                        continue
+                    if abs(mid.p1.x - mid.p2.x) > detour_thresh:
+                        continue
+
+                    for seg_a in legs_p1:
+                        for seg_c in legs_p2:
+                            to_remove = [seg_a, mid, seg_c]
+
+                            p_start = far_end(seg_a, j1)
+                            p_end = far_end(seg_c, j2)
+                            xa, xc = seg_a.p1.x, seg_c.p1.x
+
+                            if xa == xc:
+                                y_lo = min(p_start.y, p_end.y, j1.y, j2.y)
+                                y_hi = max(p_start.y, p_end.y, j1.y, j2.y)
+                                new_seg = Segment(
+                                    copy.copy(Point(xa, y_lo)),
+                                    copy.copy(Point(xa, y_hi)),
+                                )
+                                if try_apply(to_remove, [new_seg]):
+                                    return segments, False
+                                continue
+
+                            corners = sorted(
+                                [
+                                    Point(p_end.x, p_start.y),
+                                    Point(p_start.x, p_end.y),
+                                ],
+                                key=lambda p: (p.x, p.y),
+                            )
+                            for corner in corners:
+                                new_segs = []
+                                if p_start != corner:
+                                    new_segs.append(
+                                        Segment(
+                                            copy.copy(p_start), copy.copy(corner)
+                                        )
+                                    )
+                                if corner != p_end:
+                                    new_segs.append(
+                                        Segment(
+                                            copy.copy(corner), copy.copy(p_end)
+                                        )
+                                    )
+                                if try_apply(to_remove, new_segs):
+                                    return segments, False
+
+            return segments, True
+
         # Get part bounding boxes so parts can be avoided when modifying net segments.
         part_bboxes = [p.bbox * p.tx for p in node.parts]
 
@@ -3074,9 +3313,23 @@ class Router:
                     segments = split_segments(segments, net_pin_pts[net])
 
                     # Remove unnecessary wire jogs.
-                    segments, stop = remove_jogs(
+                    segments, stop_jogs = remove_jogs(
                         net, segments, node.wires, net_bboxes, part_bboxes
                     )
+
+                    # human_readable：压平 remove_jogs 未覆盖的局部小凸起，再走 merge/split。
+                    stop_detour = True
+                    if human_readable:
+                        segments, stop_detour = _straighten_local_detours(
+                            net,
+                            segments,
+                            node.wires,
+                            net_bboxes,
+                            part_bboxes,
+                            net_pin_pts[net],
+                        )
+
+                    stop = stop_jogs and stop_detour
 
                     # Keep only non zero-length segments.
                     segments = [seg for seg in segments if seg.p1 != seg.p2]
