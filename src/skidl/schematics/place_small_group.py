@@ -71,6 +71,11 @@ def _part_ctr(part):
     return (part.place_bbox * part.tx).ctr
 
 
+def _pt_dist(a, b):
+    """两点欧氏距离（Point 无 distance 方法，用差向量 magnitude）。"""
+    return (a - b).magnitude
+
+
 def _connected_pin_pts(part):
     """取已连接引脚在放置坐标系下的位置（优先 place_pt）。"""
     pts = []
@@ -99,7 +104,7 @@ def _pins_crowded_risk(part, others, grid, pin_sep):
             if other is part:
                 continue
             for opin, opt in _connected_pin_pts(other):
-                if pt.distance(opt) >= pin_sep:
+                if _pt_dist(pt, opt) >= pin_sep:
                     continue
                 pnet = getattr(_pin, "net", None)
                 onet = getattr(opin, "net", None)
