@@ -86,7 +86,7 @@ node.route(..., human_readable=True)
 
 ### `cleanup_wires()` 内 `remove_jogs()`
 
-- **`human_readable=True`**：不对 segments / `p2s` 做 `shuffle`，改为稳定排序顺序。
+- **`human_readable=True`**：不对 segments / `p2s` 做 `shuffle`.改为稳定排序顺序。
 - **`human_readable=True`**：在通用 `cleanup_wires` 流程末尾调用 `humanize_wires()`。
 
 ### `humanize_wires()`（新增）
