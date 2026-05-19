@@ -2063,14 +2063,13 @@ class Router:
             else:
                 raise RuntimeError("Unknown pin orientation.")
 
-        # Global set of part pin (x,y) points may have stuff from processing previous nodes, so clear it.
-        del pin_pts[:]  # Clear the list. Works for Python 2 and 3.
-
         for net in nets:
             # Add routing points for all pins on the net that are inside this node.
             for pin in node.get_internal_pins(net):
                 # Store the point where the pin is. (This is used after routing to trim wire stubs.)
-                pin_pts.append((pin.pt * pin.part.tx).round())
+                pin_pt = (pin.pt * pin.part.tx).round()
+                if pin_pt not in pin_pts:
+                    pin_pts.append(pin_pt)
 
                 # Add the point to which the wiring should be extended.
                 add_routing_pt(pin)
@@ -2079,6 +2078,64 @@ class Router:
                 if pin.route_pt != pin.pt:
                     seg = Segment(pin.pt, pin.route_pt) * pin.part.tx
                     node.wires[pin.net].append(seg)
+
+    def _segment_obstructed(node, segment, net=None, ignored_parts=None):
+        """Return True if a segment intersects another part or overlaps another net."""
+
+        ignored_parts = ignored_parts or set()
+
+        segment_bbox = BBox(segment.p1, segment.p2)
+        for part in node.parts:
+            if part in ignored_parts:
+                continue
+            if (part.bbox * part.tx).intersects(segment_bbox):
+                return True
+
+        segment_bbox = segment_bbox.resize(Vector(2, 2))
+        for other_net, other_segments in node.wires.items():
+            if other_net is net:
+                continue
+            for other_seg in other_segments:
+                if segment.p1.x == segment.p2.x == other_seg.p1.x == other_seg.p2.x:
+                    if segment.p1.y <= other_seg.p2.y and segment.p2.y >= other_seg.p1.y:
+                        return True
+                elif segment.p1.y == segment.p2.y == other_seg.p1.y == other_seg.p2.y:
+                    if segment.p1.x <= other_seg.p2.x and segment.p2.x >= other_seg.p1.x:
+                        return True
+
+        return False
+
+    def route_straight_nets(node, nets):
+        """Route aligned 2-pin nets directly before invoking the general router."""
+
+        direct_routed = []
+
+        for net in nets:
+            pins = list(node.get_internal_pins(net))
+            if len(pins) != 2:
+                continue
+
+            p1 = (pins[0].pt * pins[0].part.tx).round()
+            p2 = (pins[1].pt * pins[1].part.tx).round()
+            if p1 == p2 or (p1.x != p2.x and p1.y != p2.y):
+                continue
+
+            seg = Segment(copy.copy(p1), copy.copy(p2))
+            if seg.p2 < seg.p1:
+                seg.p1, seg.p2 = seg.p2, seg.p1
+
+            if node._segment_obstructed(
+                seg, net=net, ignored_parts={pins[0].part, pins[1].part}
+            ):
+                continue
+
+            node.wires[net].append(seg)
+            for pt in (p1, p2):
+                if pt not in pin_pts:
+                    pin_pts.append(pt)
+            direct_routed.append(net)
+
+        return direct_routed
 
     def create_routing_tracks(node, routing_bbox):
         """Create horizontal & vertical global routing tracks."""
@@ -2672,6 +2729,71 @@ class Router:
             """Return True if the point is contained within the horz/vert segment."""
             return seg.p1.x <= pt.x <= seg.p2.x and seg.p1.y <= pt.y <= seg.p2.y
 
+        def obstructed_by_parts_or_other_nets(
+            segment, net, wires, net_bboxes, part_obstacles, ignored_parts=None
+        ):
+            """Return True if a segment would collide with a part or overlap another net."""
+
+            ignored_parts = ignored_parts or set()
+
+            segment_bbox = BBox(segment.p1, segment.p2)
+            for part, part_bbox in part_obstacles:
+                if part in ignored_parts:
+                    continue
+                if part_bbox.intersects(segment_bbox):
+                    return True
+
+            # Expand slightly so coincident overlays with other nets are detected.
+            segment_bbox = segment_bbox.resize(Vector(2, 2))
+
+            for nt, nt_bbox in net_bboxes.items():
+                if nt is net or not segment_bbox.intersects(nt_bbox):
+                    continue
+
+                for seg in wires[nt]:
+                    if segment.p1.x == segment.p2.x == seg.p1.x == seg.p2.x:
+                        if segment.p1.y <= seg.p2.y and segment.p2.y >= seg.p1.y:
+                            return True
+                    elif segment.p1.y == segment.p2.y == seg.p1.y == seg.p2.y:
+                        if segment.p1.x <= seg.p2.x and segment.p2.x >= seg.p1.x:
+                            return True
+
+            return False
+
+        def straighten_aligned_pin_connection(
+            net, segments, wires, net_bboxes, part_obstacles, net_pins
+        ):
+            """Replace an unnecessary detour on a 2-pin aligned net with one straight segment."""
+
+            if len(net_pins) != 2 or len(segments) <= 1:
+                return segments, True
+
+            pin_pts = [(pin.pt * pin.part.tx).round() for pin in net_pins]
+            p1, p2 = pin_pts
+            if p1 == p2 or (p1.x != p2.x and p1.y != p2.y):
+                return segments, True
+
+            direct_seg = Segment(copy.copy(p1), copy.copy(p2))
+            order_seg_points([direct_seg])
+
+            if obstructed_by_parts_or_other_nets(
+                direct_seg,
+                net,
+                wires,
+                net_bboxes,
+                part_obstacles,
+                ignored_parts={pin.part for pin in net_pins},
+            ):
+                return segments, True
+
+            if len(segments) == 1:
+                seg = segments[0]
+                order_seg_points([seg])
+                if seg.p1 == direct_seg.p1 and seg.p2 == direct_seg.p2:
+                    return segments, True
+
+            return [direct_seg], False
+
         def trim_stubs(segments):
             """Return segments after removing stubs that have an unconnected endpoint."""
 
@@ -3035,7 +3157,13 @@ class Router:
                         return segments, False
 
         def _straighten_local_detours(
-            net, segments, wires, net_bboxes, part_bboxes, net_pins
+            net,
+            segments,
+            wires,
+            net_bboxes,
+            part_bboxes,
+            net_pins,
+            visited_patterns=None,
         ):
             """压平 human_readable 下 cleanup 仍残留的小凸起（保守，每次至多改一处）。
 
@@ -3083,6 +3211,10 @@ class Router:
 
             def far_end(seg, junction):
                 return seg.p2 if seg.p1 == junction else seg.p1
+
+            def pattern_key(*candidate_segs):
+                """Build a stable key so the same tiny detour is not retried repeatedly."""
+                return tuple(sorted(seg_key(seg) for seg in candidate_segs))
 
             def pins_on_path(to_remove, new_segs):
                 """本 net 落在待移除路径上的 pin 必须仍落在新路径上。"""
@@ -3140,6 +3272,16 @@ class Router:
                 return sorted(legs, key=seg_key)
 
             # 只处理明显小凸起，避免大范围改线
+            if visited_patterns is None:
+                visited_patterns = set()
+
+            # Skip this pass on large schematics because even a local scan becomes
+            # too expensive when repeated inside cleanup_wires().
+            if len(segments) > 1000:
+                return segments, True
+
+            # Only handle very small local detours. Wider rewrites belong to the
+            # main jog-removal pass and are intentionally left alone here.
             detour_thresh = max(GRID, GRID * 2)
 
             order_seg_points(segments)
@@ -3149,6 +3291,8 @@ class Router:
                 pt_segs[seg.p1].append(seg)
                 pt_segs[seg.p2].append(seg)
 
+            # Restrict this pass to simple local H-V-H / V-H-V patterns so it
+            # stays predictable and does not turn into a whole-graph optimizer.
             for mid in sorted(segments, key=seg_key):
                 # 中间拐角若接 pin，不移动拓扑（最保守）
                 if is_pin_pt(mid.p1) or is_pin_pt(mid.p2):
@@ -3170,7 +3314,13 @@ class Router:
 
                     for seg_a in legs_p1:
                         for seg_c in legs_p2:
+                            if seg_a is seg_c:
+                                continue
                             to_remove = [seg_a, mid, seg_c]
+                            candidate_key = pattern_key(seg_a, mid, seg_c)
+                            if candidate_key in visited_patterns:
+                                continue
+                            visited_patterns.add(candidate_key)
 
                             p_start = far_end(seg_a, j1)
                             p_end = far_end(seg_c, j2)
@@ -3230,7 +3380,13 @@ class Router:
 
                     for seg_a in legs_p1:
                         for seg_c in legs_p2:
+                            if seg_a is seg_c:
+                                continue
                             to_remove = [seg_a, mid, seg_c]
+                            candidate_key = pattern_key(seg_a, mid, seg_c)
+                            if candidate_key in visited_patterns:
+                                continue
+                            visited_patterns.add(candidate_key)
 
                             p_start = far_end(seg_a, j1)
                             p_end = far_end(seg_c, j2)
@@ -3462,16 +3618,19 @@ class Router:
             return segments, True
 
         # Get part bounding boxes so parts can be avoided when modifying net segments.
-        part_bboxes = [p.bbox * p.tx for p in node.parts]
+        part_obstacles = [(part, part.bbox * part.tx) for part in node.parts]
+        part_bboxes = [bbox for _, bbox in part_obstacles]
 
         # Get dict of bounding boxes for the nets in this node.
         net_bboxes = {net: segments_bbox(segs) for net, segs in node.wires.items()}
 
         # Get locations for part pins of each net. (For use when splitting net segments.)
+        net_internal_pins = dict()
         net_pin_pts = dict()
         for net in node.wires.keys():
+            net_internal_pins[net] = list(node.get_internal_pins(net))
             net_pin_pts[net] = [
-                (pin.pt * pin.part.tx).round() for pin in node.get_internal_pins(net)
+                (pin.pt * pin.part.tx).round() for pin in net_internal_pins[net]
             ]
 
         plog(
@@ -3524,6 +3683,7 @@ class Router:
         keep_cleaning = True
         clean_round = 0
         max_clean_rounds = int(route_opts.get("cleanup_max_rounds", 12))
+        local_detour_visited = defaultdict(set)
         while keep_cleaning:
             clean_round += 1
             if clean_round > max_clean_rounds:
@@ -3540,8 +3700,20 @@ class Router:
 
             for net, segments in node.wires.items():
                 net_label = getattr(net, "name", str(net))
-                # 先 split 一次，再只做 remove_jogs；避免「去 jog → split → 又出新 jog」振荡。
+                # 先 split 一次，再只跑 remove_jogs；避免「去 jog → split → 又出现 jog」振荡。
                 segments = split_segments(segments, net_pin_pts[net])
+
+                segments, stop_direct = straighten_aligned_pin_connection(
+                    net,
+                    segments,
+                    node.wires,
+                    net_bboxes,
+                    part_obstacles,
+                    net_internal_pins[net],
+                )
+                if not stop_direct:
+                    net_changed = True
+
                 inner_iter = 0
                 while inner_iter < max_inner_iters:
                     inner_iter += 1
@@ -3577,6 +3749,7 @@ class Router:
                         net_bboxes,
                         part_bboxes,
                         net_pin_pts[net],
+                        local_detour_visited[net],
                     )
                     if not stop_detour:
                         net_changed = True
@@ -3757,15 +3930,28 @@ class Router:
         try:
             _sch_progress(
                 options,
-                f"[schematic] 布线 sheet={sheet}：{len(node.parts)} 件 / "
+                f"[schematic] 布线 sheet={sheet}，{len(node.parts)} 件 / "
                 f"{len(internal_nets)} 网",
             )
+            # Clear pin endpoints from any previous routing pass in this node.
+            del pin_pts[:]  # Clear the list. Works for Python 2 and 3.
+
+            # Priority 1: directly route aligned point-to-point nets when unobstructed.
+            direct_nets = set(node.route_straight_nets(internal_nets))
+            routed_nets = [net for net in internal_nets if net not in direct_nets]
+
+            if not routed_nets:
+                node.cleanup_wires()
+                node.add_junctions()
+                node.rmv_routing_stuff()
+                rmv_attr(node, ("_route_options",))
+                return
 
             # Extend routing points of part pins to the edges of their bounding boxes.
-            node.add_routing_points(internal_nets)
+            node.add_routing_points(routed_nets)
 
             # Create the surrounding box that contains the entire routing area.
-            channel_sz = (len(internal_nets) + 1) * GRID
+            channel_sz = (len(routed_nets) + 1) * GRID
             routing_bbox = (
                 node.internal_bbox().resize(Vector(channel_sz, channel_sz))
             ).round()
@@ -3774,7 +3960,7 @@ class Router:
             h_tracks, v_tracks = node.create_routing_tracks(routing_bbox)
 
             # Create terminals on the faces in the routing tracks.
-            node.create_terminals(internal_nets, h_tracks, v_tracks)
+            node.create_terminals(routed_nets, h_tracks, v_tracks)
 
             # Draw part outlines, routing tracks and terminals.
             if options.get("draw_routing_channels"):
@@ -3783,8 +3969,8 @@ class Router:
                 )
 
             # Do global routing of nets internal to the node.
-            _sch_progress(options, f"[schematic] 全局路由 sheet={sheet} ...")
-            global_routes = node.global_router(internal_nets)
+            _sch_progress(options, f"[schematic] 全局路径 sheet={sheet} ...")
+            global_routes = node.global_router(routed_nets)
 
             # Convert the global face-to-face routes into terminals on the switchboxes.
             for route in global_routes:

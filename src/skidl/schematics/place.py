@@ -68,7 +68,7 @@ __all__ = [
 # and floating parts to arrive at a total placement for this node.
 #
 ###################################################################
-
+print("USING MY MODIFIED ROUTER")
 
 class PlacementFailure(Exception):
     """Exception raised when parts or blocks could not be placed."""
@@ -1198,6 +1198,292 @@ class Placer:
         )
         return any(token in text for token in power_tokens)
 
+    def _is_bus_net_name(node, name):
+        """Heuristic detection of bus-like or globally-named nets."""
+        if not name:
+            return False
+        text = str(name).upper()
+        bus_tokens = (
+            "BUS",
+            "ADDR",
+            "ADDRESS",
+            "DATA",
+            "GPIO",
+            "USB",
+            "PCIE",
+            "ETH",
+            "MDIO",
+            "RGMII",
+        )
+        return (
+            "[" in text
+            or "]" in text
+            or any(token in text for token in bus_tokens)
+        )
+
+    def _part_ref_prefix(node, part):
+        """Return the alphabetic prefix of a part reference."""
+        ref = str(getattr(part, "ref", "") or "").upper()
+        prefix = []
+        for ch in ref:
+            if ch.isalpha():
+                prefix.append(ch)
+            elif prefix:
+                break
+        return "".join(prefix)
+
+    def _net_connected_parts(node, net, allowed_parts=None):
+        """Return unique non-terminal parts connected to a net."""
+        parts = []
+        seen = set()
+        allowed_ids = None if allowed_parts is None else {id(part) for part in allowed_parts}
+        for pin in getattr(net, "pins", []):
+            part = getattr(pin, "part", None)
+            if part is None or is_net_terminal(part):
+                continue
+            if allowed_ids is not None and id(part) not in allowed_ids:
+                continue
+            if id(part) in seen:
+                continue
+            seen.add(id(part))
+            parts.append(part)
+        return parts
+
+    def _part_effective_bbox(node, part):
+        """Return the current placement bbox for a part."""
+        bbox = getattr(part, "place_bbox", None) or getattr(part, "lbl_bbox", None)
+        if bbox is None:
+            bbox = getattr(part, "bbox", BBox(Point(0, 0), Point(0, 0)))
+        return bbox * getattr(part, "tx", Tx())
+
+    def _bbox_manhattan_gap(node, bbox_a, bbox_b):
+        """Return the manhattan gap between two bboxes (0 if they overlap/touch)."""
+        dx = max(0, bbox_a.min.x - bbox_b.max.x, bbox_b.min.x - bbox_a.max.x)
+        dy = max(0, bbox_a.min.y - bbox_b.max.y, bbox_b.min.y - bbox_a.max.y)
+        return dx + dy
+
+    def _pin_abs_pt(node, pin):
+        """Return the absolute placed point for a pin."""
+        pin_pt = getattr(pin, "place_pt", getattr(pin, "pt", Point(pin.x, pin.y)))
+        return pin_pt * getattr(pin.part, "tx", Tx())
+
+    def _net_geometry_stats(node, pins):
+        """Return max pin distance, min pin distance, and bbox span for a net."""
+        if len(pins) < 2:
+            return 0, 0, 0
+
+        pts = [node._pin_abs_pt(pin) for pin in pins]
+        bbox = BBox()
+        for pt in pts:
+            bbox.add(pt)
+
+        max_dist = 0
+        min_dist = float("inf")
+        for i, pt_a in enumerate(pts):
+            for pt_b in pts[i + 1:]:
+                dist = abs(pt_a.x - pt_b.x) + abs(pt_a.y - pt_b.y)
+                max_dist = max(max_dist, dist)
+                min_dist = min(min_dist, dist)
+
+        if min_dist == float("inf"):
+            min_dist = 0
+
+        return max_dist, min_dist, bbox.w + bbox.h
+
+    def _same_functional_block(node, net, part_a, part_b):
+        """Heuristically detect parts that should stay visually wired together."""
+        if part_a is part_b:
+            return True
+
+        role_a = node._classify_part_role(part_a)
+        role_b = node._classify_part_role(part_b)
+        roles = {role_a, role_b}
+        prefixes = {
+            node._part_ref_prefix(part_a),
+            node._part_ref_prefix(part_b),
+        }
+
+        if "decoupling" in roles and roles.intersection({"ic", "passive", "power"}):
+            return True
+        if "ic" in roles and roles.intersection({"passive", "power"}):
+            return True
+        if prefixes.intersection({"Q", "U"}) and prefixes.intersection({"R", "C", "D", "L"}):
+            return True
+        if prefixes.intersection({"D", "LED"}) and prefixes.intersection({"R", "C"}):
+            return True
+
+        net_name = str(getattr(net, "name", "") or "")
+        if node._is_power_net_name(net_name):
+            local_roles = {"ic", "passive", "decoupling", "power", "other"}
+            if roles <= local_roles and not roles.intersection({"connector"}):
+                return True
+
+        return False
+
+    def _cluster_pins_by_distance(node, net, pins, **options):
+        """Cluster net pins that are close enough to stay visibly wired."""
+        if len(pins) < 2:
+            return [list(pins)]
+
+        grid = globals().get("GRID", 100)
+        local_wire_threshold = options.get(
+            "auto_stub_local_wire_threshold", grid * 12
+        )
+
+        parents = {id(pin): id(pin) for pin in pins}
+        def find(pin_id):
+            while parents[pin_id] != pin_id:
+                parents[pin_id] = parents[parents[pin_id]]
+                pin_id = parents[pin_id]
+            return pin_id
+
+        def union(pin_a, pin_b):
+            root_a = find(id(pin_a))
+            root_b = find(id(pin_b))
+            if root_a != root_b:
+                parents[root_b] = root_a
+
+        for i, pin_a in enumerate(pins):
+            pt_a = node._pin_abs_pt(pin_a)
+            for pin_b in pins[i + 1:]:
+                pt_b = node._pin_abs_pt(pin_b)
+                dist = abs(pt_a.x - pt_b.x) + abs(pt_a.y - pt_b.y)
+                if dist <= local_wire_threshold or node._same_functional_block(
+                    net, pin_a.part, pin_b.part
+                ):
+                    union(pin_a, pin_b)
+
+        clusters = defaultdict(list)
+        for pin in pins:
+            clusters[find(id(pin))].append(pin)
+
+        def cluster_key(cluster):
+            max_dist, min_dist, bbox_span = node._net_geometry_stats(cluster)
+            return (len(cluster), -bbox_span, -max_dist, -min_dist)
+
+        return sorted(clusters.values(), key=cluster_key, reverse=True)
+
+    def _is_local_functional_cluster(node, net, parts):
+        """Detect small motifs that read better with visible local wiring."""
+        if len(parts) < 2 or len(parts) > 4:
+            return False
+
+        prefixes = {node._part_ref_prefix(part) for part in parts}
+        roles = {part: node._classify_part_role(part) for part in parts}
+
+        if any(role == "decoupling" for role in roles.values()):
+            return True
+        if "R" in prefixes and "D" in prefixes:
+            return True
+        if "R" in prefixes and "C" in prefixes:
+            return True
+        if "Q" in prefixes and prefixes.intersection({"R", "C", "D"}):
+            return True
+        if any(role == "ic" for role in roles.values()) and any(
+            role in ("passive", "decoupling") for role in roles.values()
+        ):
+            return True
+
+        name = str(getattr(net, "name", "") or "")
+        if len(parts) == 2 and not (
+            node._is_power_net_name(name) or node._is_bus_net_name(name)
+        ):
+            return True
+
+        return False
+
+    def _prefer_visible_wire_preplacement(node, net, part_to_group, **options):
+        """Decide if a net should stay explicit before detailed geometry exists."""
+        parts = node._net_connected_parts(net)
+        if len(parts) < 2:
+            return True
+
+        name = str(getattr(net, "name", "") or "")
+        if node._is_bus_net_name(name):
+            return False
+
+        max_groups = options.get("auto_stub_visible_group_span", 2)
+        pin_groups = {
+            part_to_group[id(part)]
+            for part in parts
+            if id(part) in part_to_group
+        }
+        if len(pin_groups) > max_groups:
+            return False
+
+        max_pins = options.get("auto_stub_visible_pins", 4)
+        if len(parts) > max_pins:
+            return False
+
+        if node._is_power_net_name(name):
+            return node._is_local_functional_cluster(net, parts)
+
+        return node._is_local_functional_cluster(net, parts)
+
+    def _prefer_visible_wire_postplacement(node, net, pins, **options):
+        """Decide if a placed net should remain visible for local readability."""
+        parts = node._net_connected_parts(net, allowed_parts={pin.part for pin in pins})
+        if len(parts) < 2:
+            return True
+
+        name = str(getattr(net, "name", "") or "")
+        if node._is_bus_net_name(name):
+            return False
+
+        grid = globals().get("GRID", 100)
+        local_wire_threshold = options.get(
+            "auto_stub_local_wire_threshold", grid * 12
+        )
+        local_cluster_threshold = options.get(
+            "auto_stub_local_cluster_threshold", grid * 18
+        )
+        max_wire_pins = options.get("auto_stub_max_wire_pins", 3)
+        max_wire_dist = options.get("auto_stub_max_wire_dist", 2000)
+
+        max_dist, min_dist, bbox_span = node._net_geometry_stats(pins)
+        min_part_gap = float("inf")
+        if len(parts) >= 2:
+            part_bboxes = [node._part_effective_bbox(part) for part in parts]
+            for i, bbox_a in enumerate(part_bboxes):
+                for bbox_b in part_bboxes[i + 1:]:
+                    min_part_gap = min(
+                        min_part_gap, node._bbox_manhattan_gap(bbox_a, bbox_b)
+                    )
+        if min_part_gap == float("inf"):
+            min_part_gap = 0
+        is_local_cluster = node._is_local_functional_cluster(net, parts)
+        clusters = node._cluster_pins_by_distance(net, pins, **options)
+        largest_cluster = clusters[0] if clusters else []
+        largest_cluster_ratio = float(len(largest_cluster)) / max(len(pins), 1)
+
+        if node._is_power_net_name(name):
+            if (
+                is_local_cluster
+                and largest_cluster
+                and len(largest_cluster) == len(pins)
+                and max_dist <= local_cluster_threshold
+            ):
+                return True
+            if (
+                largest_cluster
+                and len(largest_cluster) >= 2
+                and largest_cluster_ratio >= 0.75
+                and min_part_gap <= local_wire_threshold
+            ):
+                return True
+            return False
+
+        if is_local_cluster and max_dist <= local_cluster_threshold:
+            return True
+        if len(parts) <= max_wire_pins and min_dist <= local_wire_threshold:
+            return True
+        if len(parts) <= max_wire_pins and min_part_gap <= local_wire_threshold:
+            return True
+        if len(parts) <= 2 and bbox_span <= max_wire_dist:
+            return True
+
+        return False
+
     def _classify_part_role(node, part):
         """Classify part role with conservative heuristics."""
         ref = str(getattr(part, "ref", "") or "").upper()
@@ -2115,8 +2401,9 @@ class Placer:
         """Stub nets that span multiple placement groups.
 
         When auto_stub is enabled, nets connecting parts in different groups
-        would require inter-group wiring. Converting them to labels avoids
-        routing complexity.
+        can create long or congested routes. However, stubbing every
+        cross-group net destroys local topology, so keep small local motifs as
+        visible wires and reserve labels for clearly global connections.
 
         Args:
             node: The SchNode being placed.
@@ -2145,7 +2432,9 @@ class Placer:
                     for p in net.pins
                     if id(p.part) in part_to_group
                 }
-                if len(pin_groups) > 1:
+                if len(pin_groups) > 1 and not node._prefer_visible_wire_preplacement(
+                    net, part_to_group, **options
+                ):
                     net._stub = True
                     net._stub_explicit = False
                     for p in net.get_pins():
@@ -2189,6 +2478,9 @@ class Placer:
                     id(p.part) for p in net.pins if id(p.part) in group_ids
                 }
                 if 2 <= len(net_parts) <= 4:
+                    parts = [p for p in node._net_connected_parts(net) if id(p) in group_ids]
+                    if node._is_local_functional_cluster(net, parts):
+                        continue
                     name = str(getattr(net, "name", "") or "")
                     is_power = node._is_power_net_name(name)
                     chain_nets.append((len(net_parts), 0 if is_power else 1, name.lower(), net))
