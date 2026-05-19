@@ -3145,7 +3145,13 @@ class Router:
                         return segments, False
 
         def _straighten_local_detours(
-            net, segments, wires, net_bboxes, part_bboxes, net_pins
+            net,
+            segments,
+            wires,
+            net_bboxes,
+            part_bboxes,
+            net_pins,
+            visited_patterns=None,
         ):
             """压平 human_readable 下 cleanup 仍残留的小凸起（保守，每次至多改一处）。
 
@@ -3193,6 +3199,10 @@ class Router:
 
             def far_end(seg, junction):
                 return seg.p2 if seg.p1 == junction else seg.p1
+
+            def pattern_key(*candidate_segs):
+                """Build a stable key so the same tiny detour is not retried repeatedly."""
+                return tuple(sorted(seg_key(seg) for seg in candidate_segs))
 
             def pins_on_path(to_remove, new_segs):
                 """本 net 落在待移除路径上的 pin 必须仍落在新路径上。"""
@@ -3250,6 +3260,16 @@ class Router:
                 return sorted(legs, key=seg_key)
 
             # 只处理明显小凸起，避免大范围改线
+            if visited_patterns is None:
+                visited_patterns = set()
+
+            # Skip this pass on large schematics because even a local scan becomes
+            # too expensive when repeated inside cleanup_wires().
+            if len(segments) > 1000:
+                return segments, True
+
+            # Only handle very small local detours. Wider rewrites belong to the
+            # main jog-removal pass and are intentionally left alone here.
             detour_thresh = max(GRID, GRID * 2)
 
             order_seg_points(segments)
@@ -3259,6 +3279,8 @@ class Router:
                 pt_segs[seg.p1].append(seg)
                 pt_segs[seg.p2].append(seg)
 
+            # Restrict this pass to simple local H-V-H / V-H-V patterns so it
+            # stays predictable and does not turn into a whole-graph optimizer.
             for mid in sorted(segments, key=seg_key):
                 # 中间拐角若接 pin，不移动拓扑（最保守）
                 if is_pin_pt(mid.p1) or is_pin_pt(mid.p2):
@@ -3280,7 +3302,13 @@ class Router:
 
                     for seg_a in legs_p1:
                         for seg_c in legs_p2:
+                            if seg_a is seg_c:
+                                continue
                             to_remove = [seg_a, mid, seg_c]
+                            candidate_key = pattern_key(seg_a, mid, seg_c)
+                            if candidate_key in visited_patterns:
+                                continue
+                            visited_patterns.add(candidate_key)
 
                             p_start = far_end(seg_a, j1)
                             p_end = far_end(seg_c, j2)
@@ -3340,7 +3368,13 @@ class Router:
 
                     for seg_a in legs_p1:
                         for seg_c in legs_p2:
+                            if seg_a is seg_c:
+                                continue
                             to_remove = [seg_a, mid, seg_c]
+                            candidate_key = pattern_key(seg_a, mid, seg_c)
+                            if candidate_key in visited_patterns:
+                                continue
+                            visited_patterns.add(candidate_key)
 
                             p_start = far_end(seg_a, j1)
                             p_end = far_end(seg_c, j2)
@@ -3429,11 +3463,23 @@ class Router:
 
         # Remove jogs in the wire segments of each net.
         keep_cleaning = True
+        local_detour_visited = defaultdict(set)
         while keep_cleaning:
             keep_cleaning = False
 
             for net, segments in node.wires.items():
+                # Guard cleanup_wires() from pathological oscillation or repeated
+                # tiny rewrites on dense nets. We keep the current best result
+                # once the per-net cleanup budget is exhausted.
+                max_iter = min(64, max(8, len(segments) * 2))
+                iter_count = 0
                 while True:
+                    iter_count += 1
+                    if iter_count > max_iter:
+                        # Stop trying once the cleanup budget is exhausted so
+                        # dense nets cannot loop forever in repeated rewrites.
+                        break
+
                     segments, stop_direct = straighten_aligned_pin_connection(
                         net,
                         segments,
@@ -3461,6 +3507,7 @@ class Router:
                             net_bboxes,
                             part_bboxes,
                             net_pin_pts[net],
+                            local_detour_visited[net],
                         )
 
                     stop = stop_direct and stop_jogs and stop_detour
