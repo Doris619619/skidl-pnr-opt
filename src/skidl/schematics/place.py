@@ -17,6 +17,12 @@ from copy import copy
 from skidl import Pin
 from skidl.logger import active_logger
 from skidl.utilities import export_to_all, rmv_attr, sgn
+
+
+def _sch_progress(options, message):
+    """schematic_progress=True 时输出布局阶段日志。"""
+    if options.get("schematic_progress", False):
+        active_logger.info(message)
 from .debug_draw import (
     draw_end,
     draw_pause,
@@ -2256,11 +2262,19 @@ class Placer:
         # Store the starting attributes of the node's parts, pins, and nets.
         node.attrs = node.get_attrs()
 
+        sheet = getattr(node, "name", "?")
+
         try:
             # First, recursively place children of this node.
             # TODO: Child nodes are independent, so can they be processed in parallel?
             for child in node.children.values():
                 child.place(tool=tool, **options)
+
+            if node.parts:
+                _sch_progress(
+                    options,
+                    f"[schematic] 布局 sheet={sheet}：{len(node.parts)} 件",
+                )
 
             # Group parts into those that are connected by explicit nets and
             # those that float freely connected only by stub nets.
@@ -2297,6 +2311,9 @@ class Placer:
 
             # Calculate the bounding box for the node after placement of parts and children.
             node.calc_bbox()
+
+            if node.parts:
+                _sch_progress(options, f"[schematic] 布局完成 sheet={sheet}")
 
         except PlacementFailure:
             node.rmv_placement_stuff()

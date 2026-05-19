@@ -23,6 +23,14 @@ from skidl.geometry import BBox, Point, Segment, Tx, Vector, tx_rot_90
 __all__ = ["RoutingFailure", "GlobalRoutingFailure", "SwitchboxRoutingFailure"]
 
 
+def _sch_progress(options, message):
+    """schematic_progress=True 时输出阶段日志，便于定位 place/route/cleanup 卡点。"""
+    if options.get("schematic_progress", False):
+        from skidl.logger import active_logger
+
+        active_logger.info(message)
+
+
 ###################################################################
 #
 # OVERVIEW OF SCHEMATIC AUTOROUTER
@@ -2479,13 +2487,13 @@ class Router:
     def cleanup_wires(node):
         """Try to make wire segments look prettier."""
 
-        human_readable = False
-        reuse_junctions = True
-        try:
-            human_readable = node._route_options.get("human_readable", False)
-            reuse_junctions = node._route_options.get("reuse_junctions", True)
-        except AttributeError:
-            pass
+        route_opts = getattr(node, "_route_options", {}) or {}
+        human_readable = route_opts.get("human_readable", False)
+        reuse_junctions = route_opts.get("reuse_junctions", True)
+        sheet = getattr(node, "name", "?")
+
+        def plog(msg):
+            _sch_progress(route_opts, msg)
 
         def order_seg_points(segments):
             """Order endpoints in a horizontal or vertical segment."""
@@ -3466,6 +3474,11 @@ class Router:
                 (pin.pt * pin.part.tx).round() for pin in node.get_internal_pins(net)
             ]
 
+        plog(
+            f"[schematic] cleanup 开始 sheet={sheet}，"
+            f"{len(node.wires)} 网 / {sum(len(s) for s in node.wires.values())} 段"
+        )
+
         # Do a generalized cleanup of the wire segments of each net.
         for net, segments in node.wires.items():
             # Round the wire segment endpoints to integers.
@@ -3509,76 +3522,82 @@ class Router:
 
         # Remove jogs in the wire segments of each net.
         keep_cleaning = True
+        clean_round = 0
+        max_clean_rounds = int(route_opts.get("cleanup_max_rounds", 12))
         while keep_cleaning:
+            clean_round += 1
+            if clean_round > max_clean_rounds:
+                plog(
+                    f"[schematic] cleanup 达到轮次上限 {max_clean_rounds}，"
+                    f"sheet={sheet}，强制结束"
+                )
+                break
+            plog(f"[schematic] cleanup 轮次 {clean_round} sheet={sheet}")
             keep_cleaning = False
 
+            max_inner_iters = int(route_opts.get("cleanup_max_inner_iters", 64))
+            net_changed = False
+
             for net, segments in node.wires.items():
-                while True:
-                    # Split intersecting segments.
-                    segments = split_segments(segments, net_pin_pts[net])
-
-                    stop_reuse = True
-                    if reuse_junctions:
-                        segments, stop_reuse = _reuse_wire_junctions(
-                            net,
-                            segments,
-                            net_pin_pts[net],
-                            part_bboxes,
-                            node.wires,
-                            net_bboxes,
+                net_label = getattr(net, "name", str(net))
+                # 先 split 一次，再只做 remove_jogs；避免「去 jog → split → 又出新 jog」振荡。
+                segments = split_segments(segments, net_pin_pts[net])
+                inner_iter = 0
+                while inner_iter < max_inner_iters:
+                    inner_iter += 1
+                    if inner_iter == 1 or inner_iter % 20 == 0:
+                        plog(
+                            f"[schematic] cleanup 网 {net_label} "
+                            f"去 jog {inner_iter} sheet={sheet}"
                         )
-
-                    # Remove unnecessary wire jogs.
                     segments, stop_jogs = remove_jogs(
                         net, segments, node.wires, net_bboxes, part_bboxes
                     )
-
-                    # human_readable：压平 remove_jogs 未覆盖的局部小凸起，再走 merge/split。
-                    stop_detour = True
-                    if human_readable:
-                        segments, stop_detour = _straighten_local_detours(
-                            net,
-                            segments,
-                            node.wires,
-                            net_bboxes,
-                            part_bboxes,
-                            net_pin_pts[net],
-                        )
-
-                    stop = stop_jogs and stop_detour and stop_reuse
-
-                    # Keep only non zero-length segments.
                     segments = [seg for seg in segments if seg.p1 != seg.p2]
-
-                    # Merge segments made colinear by removing jogs.
-                    segments = merge_segments(segments)
-
-                    # Split intersecting segments.
-                    segments = split_segments(segments, net_pin_pts[net])
-
-                    # Keep only non zero-length segments.
-                    segments = [seg for seg in segments if seg.p1 != seg.p2]
-
-                    # Trim wire stubs caused by removing jogs.
-                    segments = trim_stubs(segments)
-
-                    if stop:
-                        # Break from loop once net segments can no longer be improved.
+                    if not stop_jogs:
+                        net_changed = True
+                    if stop_jogs:
                         break
+                else:
+                    plog(
+                        f"[schematic] cleanup 网 {net_label} 去 jog 达上限 "
+                        f"{max_inner_iters}，sheet={sheet}"
+                    )
 
-                    # Recalculate the net bounding box after modifying its segments.
-                    net_bboxes[net] = segments_bbox(segments)
-
-                    keep_cleaning = True
-
-                # Merge segments made colinear by removing jogs.
                 segments = merge_segments(segments)
+                segments = split_segments(segments, net_pin_pts[net])
+                segments = [seg for seg in segments if seg.p1 != seg.p2]
+                segments = trim_stubs(segments)
 
-                # Update the node net's wire with the cleaned version.
+                if human_readable:
+                    segments, stop_detour = _straighten_local_detours(
+                        net,
+                        segments,
+                        node.wires,
+                        net_bboxes,
+                        part_bboxes,
+                        net_pin_pts[net],
+                    )
+                    if not stop_detour:
+                        net_changed = True
+                        segments = merge_segments(segments)
+                        segments = split_segments(segments, net_pin_pts[net])
+                        segments = [
+                            seg for seg in segments if seg.p1 != seg.p2
+                        ]
+                        segments = trim_stubs(segments)
+
+                net_bboxes[net] = segments_bbox(segments)
                 node.wires[net] = segments
+
+            if net_changed:
+                keep_cleaning = True
+
+        plog(f"[schematic] cleanup 结束 sheet={sheet}，共 {clean_round} 轮")
 
         if human_readable:
             # 在通用清理后追加保守的人类化处理：只做不改变连通性的局部简化。
+            plog(f"[schematic] humanize_wires sheet={sheet}")
             node.humanize_wires()
 
     def humanize_wires(node):
@@ -3714,6 +3733,7 @@ class Router:
             seed = 0
         random.seed(seed)
         node._route_options = options
+        sheet = getattr(node, "name", "?")
 
         # Remove any stuff leftover from a previous place & route run.
         node.rmv_routing_stuff()
@@ -3735,6 +3755,12 @@ class Router:
             return
 
         try:
+            _sch_progress(
+                options,
+                f"[schematic] 布线 sheet={sheet}：{len(node.parts)} 件 / "
+                f"{len(internal_nets)} 网",
+            )
+
             # Extend routing points of part pins to the edges of their bounding boxes.
             node.add_routing_points(internal_nets)
 
@@ -3757,6 +3783,7 @@ class Router:
                 )
 
             # Do global routing of nets internal to the node.
+            _sch_progress(options, f"[schematic] 全局路由 sheet={sheet} ...")
             global_routes = node.global_router(internal_nets)
 
             # Convert the global face-to-face routes into terminals on the switchboxes.
@@ -3777,6 +3804,10 @@ class Router:
 
             # Create detailed wiring using switchbox routing for the global routes.
             switchboxes = node.create_switchboxes(h_tracks, v_tracks)
+            _sch_progress(
+                options,
+                f"[schematic] switchbox 布线 sheet={sheet}，{len(switchboxes)} 盒 ...",
+            )
 
             # Draw switchboxes and routing channels.
             if options.get("draw_assigned_terminals"):
@@ -3790,6 +3821,7 @@ class Router:
                 )
 
             node.switchbox_router(switchboxes, **options)
+            _sch_progress(options, f"[schematic] switchbox 完成 sheet={sheet}")
 
             # If enabled, draw the global and detailed routing for debug purposes.
             if options.get("draw_switchbox_routing"):
@@ -3803,8 +3835,11 @@ class Router:
                 )
 
             # Now clean-up the wires and add junctions.
+            _sch_progress(options, f"[schematic] cleanup_wires sheet={sheet} ...")
             node.cleanup_wires()
+            _sch_progress(options, f"[schematic] add_junctions sheet={sheet}")
             node.add_junctions()
+            _sch_progress(options, f"[schematic] 布线完成 sheet={sheet}")
 
             # If enabled, draw the global and detailed routing for debug purposes.
             if options.get("draw_switchbox_routing"):
