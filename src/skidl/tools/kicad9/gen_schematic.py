@@ -520,7 +520,11 @@ def gen_schematic(
     title="SKiDL-Generated Schematic",
     flatness=0.0,
     retries=2,
-    spacing=1.0,
+    spacing=0.8,
+    compactness=0.2,
+    prefer_straight=True,
+    bend_penalty=400.0,
+    route_length_weight=None,
     **options,
 ):
     """Create a KiCad 9 schematic file from a Circuit object.
@@ -535,7 +539,19 @@ def gen_schematic(
         retries (int, optional): Number of times to re-try if routing fails. Defaults to 2.
         spacing (float, optional): Global layout spacing factor (0.5–3.0). Values >1.0
             produce a looser layout with more whitespace between parts; <1.0 produces
-            a tighter layout. Defaults to 1.0.
+            a tighter layout. Defaults to 0.8.
+        compactness (float, optional): Additional compactness bias in the range 0.0–1.0.
+            Higher values tighten placement by reducing the effective spacing used for
+            placement expansion. Defaults to 0.2.
+        prefer_straight (bool, optional): If True, route selection prefers straighter
+            paths over purely shortest-length paths. Defaults to True.
+        bend_penalty (float, optional): Additional routing cost charged each time the
+            global route changes direction. Larger values discourage jogs and doglegs.
+            Defaults to 400.0 (about 8 routing grid units).
+        route_length_weight (float, optional): Weight applied to global route segment
+            length when comparing candidate paths. Use values below 1.0 together with
+            prefer_straight/bend_penalty to accept slightly longer but straighter paths.
+            Defaults to 1.0 unless prefer_straight=True, in which case 0.6 is used.
         options (dict, optional): Dict of options and values, usually for drawing/debugging.
 
     Auto-stub options (pass as keyword arguments):
@@ -600,7 +616,23 @@ def gen_schematic(
 
     # spacing 参数校验：范围 0.5~3.0，控制器件间距的全局缩放
     spacing = max(0.5, min(3.0, float(spacing)))
-    options["spacing"] = spacing
+    compactness = max(0.0, min(1.0, float(compactness)))
+    bend_penalty = max(0.0, float(bend_penalty))
+    if route_length_weight is None:
+        route_length_weight = 0.6 if prefer_straight else 1.0
+    route_length_weight = max(0.05, float(route_length_weight))
+
+    # 用显式 compactness 偏置 spacing，而不是埋在魔法常量里，方便用户理解与回退。
+    effective_spacing = max(0.5, min(3.0, spacing * (1.0 - 0.35 * compactness)))
+
+    options["spacing"] = effective_spacing
+    options["compactness"] = compactness
+    options["prefer_straight"] = bool(prefer_straight)
+    options["bend_penalty"] = bend_penalty
+    options["route_length_weight"] = route_length_weight
+    options.setdefault("reuse_junctions", prefer_straight)
+    # 美观优先策略默认开启 human_readable；显式传 False 可回退旧版随机布局。
+    options.setdefault("human_readable", True)
 
     # Part placement options that should always be turned on.
     options["use_push_pull"] = True
@@ -612,8 +644,8 @@ def gen_schematic(
     if options.get("auto_stub", False):
         auto_stub_nets(circuit, **options)
 
-    # 初始 expansion_factor 受 spacing 缩放；重试时在此基础上继续放大
-    expansion_factor = 1.0 * spacing
+    # 初始 expansion_factor 受紧凑度修正后的 spacing 缩放；重试时在此基础上继续放大
+    expansion_factor = 1.0 * effective_spacing
     failure_type = None
 
     for attempt in range(retries):
