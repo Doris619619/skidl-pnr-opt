@@ -633,6 +633,8 @@ def gen_schematic(
     options.setdefault("reuse_junctions", prefer_straight)
     # 美观优先策略默认开启 human_readable；显式传 False 可回退旧版随机布局。
     options.setdefault("human_readable", True)
+    # 输出 place/route/cleanup 阶段日志，便于定位卡顿（不需要时设 schematic_progress=False）
+    options.setdefault("schematic_progress", True)
 
     # Part placement options that should always be turned on.
     options["use_push_pull"] = True
@@ -649,6 +651,12 @@ def gen_schematic(
     failure_type = None
 
     for attempt in range(retries):
+        if options.get("schematic_progress", False):
+            active_logger.info(
+                f"[schematic] 第 {attempt + 1}/{retries} 次尝试，"
+                f"expansion_factor={expansion_factor:.2f}"
+            )
+
         preprocess_circuit(circuit, **options)
 
         node = SchNode(
@@ -656,10 +664,20 @@ def gen_schematic(
         )
 
         try:
+            if options.get("schematic_progress", False):
+                active_logger.info("[schematic] 布局 place ...")
             node.place(expansion_factor=expansion_factor, **options)
+            if options.get("schematic_progress", False):
+                active_logger.info(
+                    f"[schematic] 布局完成，顶层子页 {len(node.children)} 个"
+                )
             if options.get("auto_stub", False):
                 _classify_and_stub_complex_nets(circuit, node, **options)
+            if options.get("schematic_progress", False):
+                active_logger.info("[schematic] 布线 route ...")
             node.route(**options)
+            if options.get("schematic_progress", False):
+                active_logger.info("[schematic] 布线完成，写入原理图 ...")
 
         except PlacementFailure as e:
             finalize_parts_and_nets(circuit, **options)
