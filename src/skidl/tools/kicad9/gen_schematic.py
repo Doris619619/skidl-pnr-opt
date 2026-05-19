@@ -606,6 +606,7 @@ def gen_schematic(
     options["prefer_straight"] = bool(prefer_straight)
     options["bend_penalty"] = bend_penalty
     options["route_length_weight"] = route_length_weight
+    options.setdefault("reuse_junctions", prefer_straight)
     # 美观优先策略默认开启 human_readable；显式传 False 可回退旧版随机布局。
     options.setdefault("human_readable", True)
 

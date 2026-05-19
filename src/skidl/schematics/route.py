@@ -2480,8 +2480,10 @@ class Router:
         """Try to make wire segments look prettier."""
 
         human_readable = False
+        reuse_junctions = True
         try:
             human_readable = node._route_options.get("human_readable", False)
+            reuse_junctions = node._route_options.get("reuse_junctions", True)
         except AttributeError:
             pass
 
@@ -3263,6 +3265,194 @@ class Router:
 
             return segments, True
 
+        def _reuse_wire_junctions(net, segments, net_pins, part_bboxes, wires, net_bboxes):
+            """同 net 端点复用已有 junction 或线段 T 接入点，避免在拐点旁另开通道。
+
+            路由搜索阶段只有 face 级树，不知道最终导线几何；本 pass 在 cleanup 里
+            把“差一格未接上”的端点 snap 到已有 junction，或在同 net 线段内部 T 接入。
+            每次至多改一处，便于与 merge/split/remove_jogs 交替收敛。
+            """
+
+            snap_dist = GRID * 2
+
+            def manhattan_dist(a, b):
+                return abs(a.x - b.x) + abs(a.y - b.y)
+
+            def is_net_pin(pt):
+                if is_pin_pt(pt):
+                    return True
+                return any(pt == pin_pt for pin_pt in net_pins)
+
+            def obstructed(segment):
+                segment_bbox = BBox(segment.p1, segment.p2)
+                for part_bbox in part_bboxes:
+                    if part_bbox.intersects(segment_bbox):
+                        return True
+                segment_bbox = segment_bbox.resize(Vector(1, 1))
+                for nt, nt_bbox in net_bboxes.items():
+                    if nt is net:
+                        continue
+                    if not segment_bbox.intersects(nt_bbox):
+                        continue
+                    for seg in wires[nt]:
+                        if segment.p1.x == segment.p2.x == seg.p1.x == seg.p2.x:
+                            if segment.p1.y <= seg.p2.y and segment.p2.y >= seg.p1.y:
+                                return True
+                        elif segment.p1.y == segment.p2.y == seg.p1.y == seg.p2.y:
+                            if segment.p1.x <= seg.p2.x and segment.p2.x >= seg.p1.x:
+                                return True
+                return False
+
+            def collect_junction_points(segs):
+                horz_segs, vert_segs = extract_horz_vert_segs(segs)
+                jpts = set()
+                for hseg in horz_segs:
+                    for vseg in vert_segs:
+                        ix, iy = vseg.p1.x, hseg.p1.y
+                        if hseg.p1.x <= ix <= hseg.p2.x and vseg.p1.y <= iy <= vseg.p2.y:
+                            jpts.add(Point(ix, iy))
+                return jpts
+
+            def point_on_interior(seg, pt):
+                order_seg_points([seg])
+                if seg.p1.y == seg.p2.y:
+                    return pt.y == seg.p1.y and seg.p1.x < pt.x < seg.p2.x
+                return pt.x == seg.p1.x and seg.p1.y < pt.y < seg.p2.y
+
+            def endpoint_is(seg, pt):
+                return seg.p1 == pt or seg.p2 == pt
+
+            def split_segment_at(segs, seg, pt):
+                if endpoint_is(seg, pt) or not point_on_interior(seg, pt):
+                    return False
+                segs.remove(seg)
+                segs.append(Segment(copy.copy(seg.p1), copy.copy(pt)))
+                segs.append(Segment(copy.copy(pt), copy.copy(seg.p2)))
+                return True
+
+            def move_endpoint(seg, ep, new_pt):
+                if seg.p1 == ep:
+                    seg.p1 = copy.copy(new_pt)
+                elif seg.p2 == ep:
+                    seg.p2 = copy.copy(new_pt)
+                else:
+                    return False
+                return seg.p1 != seg.p2
+
+            def colinear_target(seg, target):
+                if seg.p1.y == seg.p2.y:
+                    if target.y == seg.p1.y:
+                        return target
+                elif seg.p1.x == seg.p2.x:
+                    if target.x == seg.p1.x:
+                        return target
+                return None
+
+            def try_snap_endpoint(segs, seg, ep, target):
+                if colinear_target(seg, target) is None or ep == target:
+                    return False
+                if manhattan_dist(ep, target) > snap_dist:
+                    return False
+                test = Segment(copy.copy(seg.p1), copy.copy(seg.p2))
+                if test.p1 == ep:
+                    test.p1 = copy.copy(target)
+                else:
+                    test.p2 = copy.copy(target)
+                if test.p1 == test.p2 or obstructed(test):
+                    return False
+                if not move_endpoint(seg, ep, target):
+                    segs.remove(seg)
+                return True
+
+            def try_t_tap(segs, seg, ep, other):
+                if other.p1.y == other.p2.y:
+                    tap = Point(ep.x, other.p1.y)
+                else:
+                    tap = Point(other.p1.x, ep.y)
+                if manhattan_dist(ep, tap) > snap_dist:
+                    return False
+                if not point_on_interior(other, tap):
+                    return False
+                if seg.p1.y == seg.p2.y:
+                    if ep.y != tap.y or ep.y != seg.p1.y:
+                        return False
+                else:
+                    if ep.x != tap.x or ep.x != seg.p1.x:
+                        return False
+                test = Segment(copy.copy(seg.p1), copy.copy(seg.p2))
+                if test.p1 == ep:
+                    test.p1 = copy.copy(tap)
+                else:
+                    test.p2 = copy.copy(tap)
+                if test.p1 == test.p2 or obstructed(test):
+                    return False
+                if not move_endpoint(seg, ep, tap):
+                    segs.remove(seg)
+                if not endpoint_is(other, tap):
+                    split_segment_at(segs, other, tap)
+                return True
+
+            order_seg_points(segments)
+            junction_pts = collect_junction_points(segments)
+            candidates = []
+
+            for seg in segments:
+                for ep in (seg.p1, seg.p2):
+                    if is_net_pin(ep):
+                        continue
+                    for jpt in sorted(junction_pts, key=lambda p: (p.x, p.y)):
+                        if ep == jpt:
+                            continue
+                        dist = manhattan_dist(ep, jpt)
+                        if dist and dist <= snap_dist:
+                            candidates.append(
+                                (
+                                    "junction",
+                                    dist,
+                                    id(seg),
+                                    ep.x,
+                                    ep.y,
+                                    seg,
+                                    ep,
+                                    jpt,
+                                    None,
+                                )
+                            )
+                    for other in segments:
+                        if other is seg:
+                            continue
+                        if other.p1.y == other.p2.y:
+                            tap = Point(ep.x, other.p1.y)
+                        else:
+                            tap = Point(other.p1.x, ep.y)
+                        dist = manhattan_dist(ep, tap)
+                        if dist and dist <= snap_dist and point_on_interior(other, tap):
+                            candidates.append(
+                                (
+                                    "ttap",
+                                    dist,
+                                    id(seg),
+                                    ep.x,
+                                    ep.y,
+                                    seg,
+                                    ep,
+                                    tap,
+                                    other,
+                                )
+                            )
+
+            candidates.sort(key=lambda c: (c[0], c[1], c[2], c[3], c[4]))
+            for kind, _, _, _, _, seg, ep, target, other in candidates:
+                if seg not in segments:
+                    continue
+                if kind == "junction":
+                    if try_snap_endpoint(segments, seg, ep, target):
+                        return segments, False
+                elif other in segments and try_t_tap(segments, seg, ep, other):
+                    return segments, False
+
+            return segments, True
+
         # Get part bounding boxes so parts can be avoided when modifying net segments.
         part_bboxes = [p.bbox * p.tx for p in node.parts]
 
@@ -3302,6 +3492,19 @@ class Router:
             # Trim wire stubs.
             segments = trim_stubs(segments)
 
+            if reuse_junctions:
+                segments, _ = _reuse_wire_junctions(
+                    net,
+                    segments,
+                    net_pin_pts[net],
+                    part_bboxes,
+                    node.wires,
+                    net_bboxes,
+                )
+                segments = merge_segments(segments)
+                segments = split_segments(segments, net_pin_pts[net])
+                segments = [seg for seg in segments if seg.p1 != seg.p2]
+
             node.wires[net] = segments
 
         # Remove jogs in the wire segments of each net.
@@ -3313,6 +3516,17 @@ class Router:
                 while True:
                     # Split intersecting segments.
                     segments = split_segments(segments, net_pin_pts[net])
+
+                    stop_reuse = True
+                    if reuse_junctions:
+                        segments, stop_reuse = _reuse_wire_junctions(
+                            net,
+                            segments,
+                            net_pin_pts[net],
+                            part_bboxes,
+                            node.wires,
+                            net_bboxes,
+                        )
 
                     # Remove unnecessary wire jogs.
                     segments, stop_jogs = remove_jogs(
@@ -3331,7 +3545,7 @@ class Router:
                             net_pin_pts[net],
                         )
 
-                    stop = stop_jogs and stop_detour
+                    stop = stop_jogs and stop_detour and stop_reuse
 
                     # Keep only non zero-length segments.
                     segments = [seg for seg in segments if seg.p1 != seg.p2]
