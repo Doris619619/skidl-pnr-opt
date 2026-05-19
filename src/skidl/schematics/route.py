@@ -7,6 +7,7 @@ Autorouter for generating wiring between symbols in a schematic.
 """
 
 import copy
+import heapq
 import random
 import sys
 from collections import Counter, defaultdict
@@ -2204,8 +2205,18 @@ class Router:
 
     def global_router(node, nets):
         human_readable = False
+        prefer_straight = False
+        bend_penalty = 0.0
+        length_weight = 1.0
         try:
             human_readable = node._route_options.get("human_readable", False)
+            prefer_straight = node._route_options.get("prefer_straight", False)
+            bend_penalty = float(node._route_options.get("bend_penalty", 0.0))
+            length_weight = float(
+                node._route_options.get(
+                    "route_length_weight", 0.6 if prefer_straight else 1.0
+                )
+            )
         except AttributeError:
             pass
 
@@ -2219,6 +2230,12 @@ class Router:
                 len(getattr(face, "pins", [])),
                 len(getattr(face, "terminals", [])),
             )
+
+        def face_route_axis(face):
+            """Return the primary routing axis when traversing through a face."""
+            if face.track.orientation == VERT:
+                return HORZ
+            return VERT
 
         """Globally route a list of nets from face to face.
 
@@ -2266,81 +2283,66 @@ class Router:
             if start_face in stop_faces or not stop_faces:
                 return GlobalWire(net)
 
-            # Record faces that have been visited and their distance from the start face.
-            visited_faces = [start_face]
-            start_face.dist_from_start = 0
-
             # Path searches are allowed to touch a Face on a Part if it
             # has a Pin on the net being routed or if it is one of the stop faces.
             # This is necessary to allow a search to terminate on a stop face or to
             # pass through a face with a net pin on the way to finding a connection
             # to one of the stop faces.
             unconstrained_faces = stop_faces | net_pin_faces
+            start_state = (start_face, face_route_axis(start_face))
+            best_metric = {start_state: (0.0, 0)}
+            prev_state = {}
+            frontier = [(0.0, 0, 0, start_state)]
+            search_order = 1
 
-            # Search through faces until a path is found & returned or a routing exception occurs.
-            while True:
-                # Set up for finding the closest unvisited face.
-                closest_dist = float("inf")
-                closest_face = None
+            # 方向被纳入搜索状态后，可以在总代价里显式加入 bend penalty，
+            # 从而让“略长但更直”的路径击败“更短但反复转向”的路径。
+            while frontier:
+                metric_cost, metric_bends, _, state = heapq.heappop(frontier)
+                if (metric_cost, metric_bends) != best_metric.get(state):
+                    continue
 
-                # Search for the closest face adjacent to the visited faces.
-                visited_faces.sort(key=lambda f: f.dist_from_start)
-                for visited_face in visited_faces:
-                    if visited_face.dist_from_start > closest_dist:
-                        # Visited face is already further than the current
-                        # closest face, so no use continuing search since
-                        # any remaining visited faces are even more distant.
-                        break
+                visited_face, route_axis = state
 
-                    # Get the distances to the faces adjacent to this previously-visited face
-                    # and update the closest face if appropriate.
-                    for adj in visited_face.adjacent:
-                        if adj.face in visited_faces:
-                            # Don't re-visit faces that have already been visited.
-                            continue
+                if visited_face in stop_faces:
+                    face_path = [visited_face]
+                    while state != start_state:
+                        state = prev_state[state]
+                        face_path.append(state[0])
 
-                        if (
-                            adj.face not in unconstrained_faces
-                            and adj.face.capacity <= 0
-                        ):
-                            # Skip faces with insufficient routing capacity.
-                            continue
-
-                        # Compute distance of this adjacent face to the start face.
-                        dist = visited_face.dist_from_start + adj.dist
-
-                        if dist < closest_dist:
-                            # Record the closest face seen so far.
-                            closest_dist = dist
-                            closest_face = adj.face
-                            closest_face.prev_face = visited_face
-
-                if not closest_face:
-                    # Exception raised if couldn't find a path from start to stop faces.
-                    raise GlobalRoutingFailure(
-                        f"Global routing failure: {net.name} {net} {start_face.pins}"
-                    )
-
-                # Add the closest adjacent face to the list of visited faces.
-                closest_face.dist_from_start = closest_dist
-                visited_faces.append(closest_face)
-
-                if closest_face in stop_faces:
-                    # The newest, closest face is actually on the list of stop faces, so the search is done.
-                    # Now search back from this face to find the path back to the start face.
-                    face_path = [closest_face]
-                    while face_path[-1] is not start_face:
-                        face_path.append(face_path[-1].prev_face)
-
-                    # Decrement the routing capacities of the path faces to account for this new routing.
-                    # Don't decrement the stop face because any routing through it was accounted for
-                    # during a previous routing.
                     for face in face_path[:-1]:
                         if face.capacity > 0:
                             face.capacity -= 1
 
-                    # Reverse face path to go from start-to-stop face and return it.
                     return GlobalWire(net, reversed(face_path))
+
+                for adj in sorted(visited_face.adjacent, key=lambda a: stable_face_key(a.face)):
+                    if (
+                        adj.face not in unconstrained_faces
+                        and adj.face.capacity <= 0
+                    ):
+                        continue
+
+                    next_axis = face_route_axis(adj.face)
+                    bend_count = 1 if next_axis != route_axis else 0
+                    next_state = (adj.face, next_axis)
+                    next_metric = (
+                        metric_cost + adj.dist * length_weight + bend_count * bend_penalty,
+                        metric_bends + bend_count,
+                    )
+
+                    if next_metric < best_metric.get(next_state, (float("inf"), float("inf"))):
+                        best_metric[next_state] = next_metric
+                        prev_state[next_state] = state
+                        heapq.heappush(
+                            frontier,
+                            (next_metric[0], next_metric[1], search_order, next_state),
+                        )
+                        search_order += 1
+
+            raise GlobalRoutingFailure(
+                f"Global routing failure: {net.name} {net} {start_face.pins}"
+            )
 
         # Key function for setting the order in which nets will be globally routed.
         def rank_net(net):
