@@ -138,10 +138,12 @@ def add_placement_bboxes(parts, **options):
         # expansion_factor > 1 is used to expand the area for routing around each part,
         # usually in response to a failed routing phase. But don't expand the routing
         # around NetTerminals since those are just used to label wires.
+        # spacing 因子叠加到 expansion_factor 上，控制全局留白松紧
         if isinstance(part, NetTerminal):
             expansion_factor = 1
         else:
-            expansion_factor = options.get("expansion_factor", 1.0)
+            spacing = options.get("spacing", 1.0)
+            expansion_factor = options.get("expansion_factor", 1.0) * spacing
 
         # Add padding for routing to the right and upper sides.
         part.place_bbox.add(
@@ -1487,6 +1489,10 @@ class Placer:
 
         if human_readable:
             # 用稳定可读布局替代随机/机械 BFS，减少多次运行时版图漂移。
+            # spacing 缩放分区间距，>1 更松散，<1 更紧凑
+            _sp = options.get("spacing", 1.0)
+            _gap = int(BLK_INT_PAD * _sp)
+
             roles = {part: node._classify_part_role(part) for part in real_parts}
             main_part = node._find_main_part(real_parts, adjacency=adjacency)
             main_part.tx = Tx().move(Point(0, 0))
@@ -1532,20 +1538,21 @@ class Placer:
                     decoup_power.append(part)
 
             # 主器件放中心，其它器件按角色分区，优先形成人读图习惯的左右/上下结构。
-            top_y = main_bbox.min.y - (BLK_INT_PAD + 2 * GRID)
-            left_x = main_bbox.min.x - (3 * BLK_INT_PAD)
-            right_x = main_bbox.max.x + (2 * BLK_INT_PAD)
-            bottom_y = main_bbox.max.y + (2 * BLK_INT_PAD)
+            # 分区间距受 spacing 缩放
+            top_y = main_bbox.min.y - (_gap + 2 * GRID)
+            left_x = main_bbox.min.x - (3 * _gap)
+            right_x = main_bbox.max.x + (2 * _gap)
+            bottom_y = main_bbox.max.y + (2 * _gap)
 
             top_row = power_parts + decoup_power
             if top_row:
-                node._place_row(top_row, left_x, top_y, direction=1, gap=BLK_INT_PAD)
+                node._place_row(top_row, left_x, top_y, direction=1, gap=_gap)
 
             if decoup_near_main:
                 node._place_row(
                     decoup_near_main,
                     main_bbox.min.x,
-                    main_bbox.min.y - BLK_INT_PAD,
+                    main_bbox.min.y - _gap,
                     direction=1,
                     gap=GRID,
                 )
@@ -1555,13 +1562,13 @@ class Placer:
                 for part in left_connectors:
                     bbox = part.place_bbox
                     part.tx = Tx().move(Point(left_x - bbox.w, y))
-                    y += max(bbox.h, GRID) + BLK_INT_PAD
+                    y += max(bbox.h, GRID) + _gap
 
             if right_connectors:
                 y = main_bbox.min.y
                 for part in right_connectors:
                     part.tx = Tx().move(Point(right_x, y))
-                    y += max(part.place_bbox.h, GRID) + BLK_INT_PAD
+                    y += max(part.place_bbox.h, GRID) + _gap
 
             passive_near = []
             passive_far = []
@@ -1574,22 +1581,22 @@ class Placer:
             if passive_near:
                 node._place_row(
                     passive_near,
-                    main_bbox.max.x + BLK_INT_PAD,
-                    main_bbox.max.y + BLK_INT_PAD,
+                    main_bbox.max.x + _gap,
+                    main_bbox.max.y + _gap,
                     direction=1,
-                    gap=BLK_INT_PAD,
+                    gap=_gap,
                 )
             if passive_far:
                 node._place_row(
                     passive_far,
-                    main_bbox.min.x - BLK_INT_PAD,
+                    main_bbox.min.x - _gap,
                     bottom_y,
                     direction=1,
-                    gap=BLK_INT_PAD,
+                    gap=_gap,
                 )
 
             if other_parts:
-                node._place_row(other_parts, right_x, bottom_y, direction=1, gap=BLK_INT_PAD)
+                node._place_row(other_parts, right_x, bottom_y, direction=1, gap=_gap)
 
             # 分区摆放后再做几何对齐（主干共线、支路分层、左右对称、去重叠）。
             node._align_connected_geometry(
@@ -1919,8 +1926,9 @@ class Placer:
             # Tag indicates the type of part block.
             tag = 2 if (part_list is floating_parts) else 1
 
-            # pad the bounding box so part blocks don't butt-up against each other.
-            pad = BLK_EXT_PAD
+            # 块间外部留白受 spacing 缩放
+            _sp = options.get("spacing", 1.0)
+            pad = int(BLK_EXT_PAD * _sp)
             bbox = bbox.resize(Vector(pad, pad))
 
             # Create the part block and place it on the list.
@@ -1931,17 +1939,12 @@ class Placer:
             # Calculate bounding box of child node.
             bbox = child.calc_bbox()
 
-            # Set padding for separating bounding box from others.
+            # 子节点块间留白同样受 spacing 缩放
+            _sp = options.get("spacing", 1.0)
             if child.flattened:
-                # This is a flattened node so the parts will be shown.
-                # Set the padding to include a pad between the parts and the
-                # graphical box that contains them, plus the padding around
-                # the outside of the graphical box.
-                pad = BLK_INT_PAD + BLK_EXT_PAD
+                pad = int((BLK_INT_PAD + BLK_EXT_PAD) * _sp)
             else:
-                # This is an unflattened child node showing no parts on the inside
-                # so just pad around the outside of its graphical box.
-                pad = BLK_EXT_PAD
+                pad = int(BLK_EXT_PAD * _sp)
             bbox = bbox.resize(Vector(pad, pad))
 
             # Set the grid snapping point and tag for this child node.

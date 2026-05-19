@@ -496,6 +496,7 @@ def gen_schematic(
     title="SKiDL-Generated Schematic",
     flatness=0.0,
     retries=2,
+    spacing=1.0,
     **options,
 ):
     """Create a KiCad 9 schematic file from a Circuit object.
@@ -508,6 +509,9 @@ def gen_schematic(
         flatness (float, optional): Determines how much the hierarchy is flattened in the schematic.
             Defaults to 0.0 (completely hierarchical). Use 1.0 to flatten everything into one sheet.
         retries (int, optional): Number of times to re-try if routing fails. Defaults to 2.
+        spacing (float, optional): Global layout spacing factor (0.5–3.0). Values >1.0
+            produce a looser layout with more whitespace between parts; <1.0 produces
+            a tighter layout. Defaults to 1.0.
         options (dict, optional): Dict of options and values, usually for drawing/debugging.
 
     Auto-stub options (pass as keyword arguments):
@@ -570,6 +574,10 @@ def gen_schematic(
 
     _setup_kicad_env()
 
+    # spacing 参数校验：范围 0.5~3.0，控制器件间距的全局缩放
+    spacing = max(0.5, min(3.0, float(spacing)))
+    options["spacing"] = spacing
+
     # Part placement options that should always be turned on.
     options["use_push_pull"] = True
     options["rotate_parts"] = True
@@ -580,7 +588,8 @@ def gen_schematic(
     if options.get("auto_stub", False):
         auto_stub_nets(circuit, **options)
 
-    expansion_factor = 1.0
+    # 初始 expansion_factor 受 spacing 缩放；重试时在此基础上继续放大
+    expansion_factor = 1.0 * spacing
     failure_type = None
 
     for attempt in range(retries):
