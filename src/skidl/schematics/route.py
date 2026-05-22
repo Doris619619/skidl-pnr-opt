@@ -62,16 +62,16 @@ def _driver_rail_corridor_hits_bbox(bb, rail_y, x_min, x_max, grid, side="top"):
 
 
 def _shift_driver_rail_y(node, rail_y, x_min, x_max, grid, side, max_tries=5):
-    """预布线前再次外移 rail_y，避免水平线穿过器件 place_bbox。"""
-    real = [
-        p
-        for p in node.parts
-        if getattr(p, "ref", None) and getattr(p, "place_bbox", None) and getattr(p, "tx", None)
-    ]
+    """预布线前再次外移 rail_y，避免水平线穿过器件可见外框（非 place_bbox 膨胀）。"""
+    from skidl.schematics.topology import _part_visual_bbox
+
+    real = [p for p in node.parts if getattr(p, "ref", None) and getattr(p, "tx", None)]
     for _ in range(max_tries):
         blocked = False
         for part in real:
-            bb = part.place_bbox * part.tx
+            bb = _part_visual_bbox(part)
+            if bb is None:
+                continue
             if _driver_rail_corridor_hits_bbox(bb, rail_y, x_min, x_max, grid, side):
                 blocked = True
                 break
@@ -85,7 +85,7 @@ def _shift_driver_rail_y(node, rail_y, x_min, x_max, grid, side, max_tries=5):
 
 
 def _refresh_driver_rail_plan(node, nets, options):
-    """布线前按当前 place_bbox 重算 rail 走廊（避免 place 与 route 两次 expansion 错位）。"""
+    """布线前按当前可见外框重算 rail 走廊（lbl_bbox，不受 place 膨胀影响）。"""
     topology = getattr(node, "_last_topology_result", None) or {}
     if topology.get("kind") != "generic_driver" or topology.get("fallback") is not False:
         return getattr(node, "_driver_rail_plan", None) or {"enabled": False}
@@ -109,6 +109,19 @@ def _driver_route_pins(node, net):
     ]
 
 
+def _driver_chain_bus_y(pin_pts, grid):
+    """
+    主链行内水平母线的 Y。
+    不用 (top_y + bottom_y) / 2：place 膨胀 bbox 会把 plan 的 bottom_y 拉得很远。
+    用引脚 Y 中位数下移一格，避免离群 pin 或膨胀 bbox 把母线甩到页面底部。
+    """
+    if not pin_pts:
+        return 0
+    ys = sorted(pt.y for pt in pin_pts)
+    row_y = ys[len(ys) // 2]
+    return Point(0, row_y + grid).snap(grid).y
+
+
 def route_driver_chain_local_nets(node, nets, **options):
     """
     主链行内网（含 Net-(D1-A)/Net-(D1-K)）：水平短母线 + 竖 stub，不走 switchbox 绕框。
@@ -122,7 +135,6 @@ def route_driver_chain_local_nets(node, nets, **options):
 
     grid = int(plan.get("grid", options.get("grid", 100)))
     rail_handled = set(getattr(node, "_driver_rail_routed_nets", set()) or [])
-    mid_y = Point(0, (plan["top_y"] + plan["bottom_y"]) / 2).snap(grid).y
     handled = set()
 
     for net in nets:
@@ -135,7 +147,7 @@ def route_driver_chain_local_nets(node, nets, **options):
             continue
 
         pin_pts = [(pin.pt * pin.part.tx).round() for pin in pins]
-        bus_y = mid_y
+        bus_y = _driver_chain_bus_y(pin_pts, grid)
         x_min = min(pt.x for pt in pin_pts)
         x_max = max(pt.x for pt in pin_pts)
         segs = [Segment(Point(x_min, bus_y), Point(x_max, bus_y))]

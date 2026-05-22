@@ -561,8 +561,52 @@ def _union_placed_bbox(parts):
     return bb
 
 
+def _part_visual_bbox(part):
+    """原理图可见外框：lbl_bbox 优先，避免 place_bbox 布线膨胀把 rail 甩远。"""
+    tx = getattr(part, "tx", None)
+    if tx is None:
+        return None
+    lbl = getattr(part, "lbl_bbox", None)
+    if lbl is not None:
+        return lbl * tx
+    place = getattr(part, "place_bbox", None)
+    if place is not None:
+        return place * tx
+    return None
+
+
+def _union_visual_bbox(parts):
+    """合并已放置器件的可见外框，供 driver rail 顶/底 Y 与走廊计算。"""
+    bb = BBox(Point(0, 0), Point(0, 0))
+    any_part = False
+    for part in parts:
+        vis = _part_visual_bbox(part)
+        if vis is None:
+            continue
+        bb.add(vis)
+        any_part = True
+    if not any_part:
+        return None
+    return bb
+
+
+def _layout_bbox(part):
+    """driver 分区/主链布局用的外框：可见符号框，不用 place 布线膨胀。"""
+    vis = _part_visual_bbox(part)
+    if vis is not None:
+        return vis
+    if getattr(part, "place_bbox", None) is not None and getattr(part, "tx", None) is not None:
+        return part.place_bbox * part.tx
+    return None
+
+
+def _part_layout_h(part, grid):
+    bb = _layout_bbox(part)
+    return max(bb.h if bb is not None else 0, grid)
+
+
 def _rail_corridor_intersects_bbox(bb, rail_y, x_min, x_max, grid, side="top"):
-    """水平 rail 走廊（宽 GRID）是否与器件 place_bbox 相交。"""
+    """水平 rail 走廊（宽 GRID）是否与器件可见/放置框相交。"""
     if x_max < bb.min.x or x_min > bb.max.x:
         return False
     if side == "top":
@@ -572,14 +616,49 @@ def _rail_corridor_intersects_bbox(bb, rail_y, x_min, x_max, grid, side="top"):
     return not (bb.max.y < band_lo or bb.min.y > band_hi)
 
 
+def _driver_chain_pin_y_span(node):
+    """主功率链引脚 Y 范围（Y 向上）；无链时返回 None。"""
+    row_parts = set(getattr(node, "_driver_chain_parts", set()) or [])
+    if not row_parts:
+        return None
+    ys = []
+    for part in row_parts:
+        tx = getattr(part, "tx", None)
+        if tx is None:
+            continue
+        for pin in getattr(part, "pins", []):
+            if getattr(pin, "stub", False):
+                continue
+            if not pin.is_connected():
+                continue
+            ys.append((pin.pt * tx).y)
+    if not ys:
+        return None
+    return min(ys), max(ys)
+
+
+def _clamp_rail_y_to_driver_chain(node, top_y, bottom_y, grid, rail_margin):
+    """
+    把顶/底 rail 限制在主链引脚附近，避免 union/place 离群框把 rail 甩到页底。
+    """
+    span = _driver_chain_pin_y_span(node)
+    if span is None:
+        return top_y, bottom_y
+    row_lo, row_hi = span
+    band = max(rail_margin, 3 * grid)
+    top_y = max(top_y, row_lo - band)
+    bottom_y = min(bottom_y, row_hi + band)
+    return top_y, bottom_y
+
+
 def _find_clear_rail_y(node, parts, rail_y, x_min, x_max, grid, side, max_tries=5):
-    """若走廊压到器件 bbox，沿外侧逐格偏移 rail_y（最多 5 次）。"""
+    """若走廊压到器件可见框，沿外侧逐格偏移 rail_y（最多 5 次）。"""
     for _ in range(max_tries):
         blocked = False
         for part in parts:
-            if getattr(part, "place_bbox", None) is None or getattr(part, "tx", None) is None:
+            bb = _part_visual_bbox(part)
+            if bb is None:
                 continue
-            bb = part.place_bbox * part.tx
             if _rail_corridor_intersects_bbox(bb, rail_y, x_min, x_max, grid, side):
                 blocked = True
                 break
@@ -628,7 +707,7 @@ def build_driver_rail_plan(node, parts, nets, topology, main_part, **options):
         for p in parts
         if getattr(p, "place_bbox", None) is not None and getattr(p, "tx", None) is not None
     ]
-    union = _union_placed_bbox(real_parts)
+    union = _union_visual_bbox(real_parts)
     if union is None:
         return disabled
 
@@ -642,6 +721,9 @@ def build_driver_rail_plan(node, parts, nets, topology, main_part, **options):
     )
     bottom_y = _find_clear_rail_y(
         node, real_parts, bottom_y, x_min, x_max, grid, side="bottom"
+    )
+    top_y, bottom_y = _clamp_rail_y_to_driver_chain(
+        node, top_y, bottom_y, grid, rail_margin
     )
 
     return {
@@ -688,9 +770,9 @@ def _log_rail_blockers(node, parts, plan, options):
     x_max = plan["x_max"]
     for side, rail_y in (("top", plan["top_y"]), ("bottom", plan["bottom_y"])):
         for part in parts:
-            if getattr(part, "place_bbox", None) is None or getattr(part, "tx", None) is None:
+            bb = _part_visual_bbox(part)
+            if bb is None:
                 continue
-            bb = part.place_bbox * part.tx
             if _rail_corridor_intersects_bbox(bb, rail_y, x_min, x_max, grid, side):
                 active_logger.info(
                     "[schematic] driver rail blocker: ref=%s bbox=%s rail=%s"
@@ -777,7 +859,7 @@ def apply_driver_rail_safe_placement(
         for p in parts
         if getattr(p, "place_bbox", None) is not None and getattr(p, "tx", None) is not None
     ]
-    union = _union_placed_bbox(real_parts)
+    union = _union_visual_bbox(real_parts)
     if union is None:
         return
 
@@ -814,7 +896,7 @@ def apply_driver_rail_safe_placement(
     for part in parts:
         if part in row_parts or part is main_part or part in decoup_caps:
             continue
-        h = max(getattr(part.place_bbox, "h", 0), grid)
+        h = _part_layout_h(part, grid)
         if _part_on_net_set(part, top_set) and not _part_on_net_set(part, bottom_set):
             _nudge_y(part, top_y + grid + h / 2)
         elif _part_on_net_set(part, bottom_set) and not _part_on_net_set(part, top_set):
@@ -826,18 +908,22 @@ def apply_driver_rail_safe_placement(
         key=node._part_ref_key,
     )
     if control_parts:
-        main_bbox = main_part.place_bbox * main_part.tx
-        ctrl_x = main_bbox.max.x + gap * 2
+        main_vis = _layout_bbox(main_part)
+        if main_vis is None:
+            main_vis = main_part.place_bbox * main_part.tx
+        ctrl_x = main_vis.max.x + gap * 2
         ctrl_y = mid_y + gap
         _place_parts_in_row(node, control_parts, ctrl_x, ctrl_y, gap, grid)
 
     # LED+/LED- 去耦：贴在主控右侧、两 rail 之间竖排，避免甩到图纸底部。
     if decoup_caps:
-        main_bbox = main_part.place_bbox * main_part.tx
-        cx = main_bbox.max.x + gap * 2
+        main_vis = _layout_bbox(main_part)
+        if main_vis is None:
+            main_vis = main_part.place_bbox * main_part.tx
+        cx = main_vis.max.x + gap * 2
         y_cursor = top_y + grid
         for cap in sorted(decoup_caps, key=node._part_ref_key):
-            h = max(getattr(cap.place_bbox, "h", 0), grid)
+            h = _part_layout_h(cap, grid)
             _nudge_y(cap, y_cursor + h / 2)
             ctr = node._placement_ctr(cap)
             snapped_x = Point(cx, ctr.y).snap(grid).x
@@ -1003,7 +1089,9 @@ def apply_generic_driver_layout(
         "trunk_gap", max(blk_pad, grid * 2)
     )
 
-    main_bbox = main_part.place_bbox * main_part.tx
+    main_bbox = _layout_bbox(main_part)
+    if main_bbox is None:
+        return
     main_ctr = node._placement_ctr(main_part)
     chain, chain_parts = _build_driver_chain_order(
         node, roles, topology, main_part
@@ -1026,9 +1114,7 @@ def apply_generic_driver_layout(
         key=node._part_ref_key,
     )
     if aux_output and not use_rail:
-        top_y = main_bbox.min.y - gap - max(
-            max(getattr(p.place_bbox, "h", 0), grid) for p in aux_output
-        )
+        top_y = main_bbox.min.y - gap - max(_part_layout_h(p, grid) for p in aux_output)
         _place_parts_in_row(
             node,
             aux_output,
@@ -1044,7 +1130,7 @@ def apply_generic_driver_layout(
         [p for p in topology.get("control_parts", set()) if p not in chain_parts],
         key=node._part_ref_key,
     )
-    if control_parts:
+    if control_parts and not use_rail:
         ctrl_y = main_bbox.max.y + gap
         _place_parts_in_row(
             node,
@@ -1062,7 +1148,7 @@ def apply_generic_driver_layout(
         key=node._part_ref_key,
     )
     if sense_parts:
-        max_h = max(max(getattr(p.place_bbox, "h", 0), grid) for p in sense_parts)
+        max_h = max(_part_layout_h(p, grid) for p in sense_parts)
         sense_y = main_bbox.min.y - gap - max_h
         _place_parts_in_row(
             node,

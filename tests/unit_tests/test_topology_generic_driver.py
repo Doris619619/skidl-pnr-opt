@@ -2,12 +2,14 @@
 
 """generic driver topology 检测与日志格式单元测试。"""
 
+from skidl.geometry import BBox, Point, Tx
 from skidl.schematics.topology import (
     _collect_driver_rail_nets,
     _disabled_topology,
     _is_anonymous_net,
     _score_candidate_ic,
     _token_in_text,
+    build_driver_rail_plan,
     detect_known_topology,
     format_topology_log_line,
 )
@@ -156,6 +158,40 @@ def test_driver_score_combo_on_minimal_buck_like_graph():
     assert combo
     assert conf >= 40
     assert sc >= 8
+
+
+def test_build_driver_rail_plan_uses_visual_bbox_not_place_padding():
+    """place_bbox 膨胀很大时，bottom_y 仍应贴近 lbl_bbox 下沿。"""
+    grid = 100
+    u2 = _FakePart("U2")
+    u2.tx = Tx()
+    u2.lbl_bbox = BBox(Point(0, 0), Point(400, 500))
+    u2.place_bbox = BBox(Point(-2000, -2000), Point(6000, 8000))
+    gnd = _FakeNet("GND")
+    vin = _FakeNet("VCC_24V")
+    topology = {
+        "kind": "generic_driver",
+        "fallback": False,
+        "control_nets": [],
+        "switch_or_drive_nets": [],
+        "ground_nets": [gnd],
+        "input_nets": [vin],
+        "power_nets": [vin],
+        "output_nets": [],
+    }
+    node = _FakeNode()
+    plan = build_driver_rail_plan(
+        node,
+        [u2],
+        [gnd, vin],
+        topology,
+        u2,
+        human_readable=True,
+        driver_rail_routing=True,
+        grid=grid,
+    )
+    assert plan["enabled"]
+    assert plan["bottom_y"] <= 500 + 3 * grid
 
 
 def test_collect_driver_rail_nets_excludes_control_and_anonymous():
